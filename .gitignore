@@ -1,0 +1,30 @@
+# Compiled binaries (too large for git)
+linux/libfairino/*.so
+linux/libfairino/*.c
+linux/fairino/build/
+linux/fairino/*.so
+linux/example/__pycache__/
+linux/fairino/__pycache__/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Large PDF manual (127MB — download separately)
+docs/fr.pdf
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Claude Code local settings
+.claude/
