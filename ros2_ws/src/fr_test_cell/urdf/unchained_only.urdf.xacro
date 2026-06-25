@@ -1,0 +1,120 @@
+<?xml version="1.0"?>
+<!--
+  Unchained Junior URDF.
+  STL placed at world origin with 90° X rotation (CAD Y-up → ROS Z-up).
+  Deck positions are in CAD frame (X=right, Y=up, Z=front).
+
+  Use deck_offset_x/y/z to nudge all deck positions if they don't align
+  with the actual loading surfaces.
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="unchained_only">
+
+  <xacro:arg name="deck_offset_x" default="0.0"/>
+  <xacro:arg name="deck_offset_y" default="0.0"/>
+  <xacro:arg name="deck_offset_z" default="0.0"/>
+  <xacro:property name="dx" value="$(arg deck_offset_x)"/>
+  <xacro:property name="dy" value="$(arg deck_offset_y)"/>
+  <xacro:property name="dz" value="$(arg deck_offset_z)"/>
+
+  <!-- Height of the device's CAD origin above the floor (world z=0).
+       For Unchained Junior: STL_Y_min (-42.3mm) + cart_height (587.375mm)
+       = 629.675mm. Override via launch arg if device is on a different cart. -->
+  <xacro:arg name="device_height" default="0.629675"/>
+
+  <link name="world"/>
+
+  <link name="unchained_junior">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://fr_test_cell/meshes/unchained_junior_visual.stl"
+              scale="0.001 0.001 0.001"/>
+      </geometry>
+      <material name="grey">
+        <color rgba="0.6 0.6 0.65 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://fr_test_cell/meshes/unchained_junior_collision.stl"
+              scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Rotate +90° around X so device's SW Y-up axis aligns with world Z-up.
+       Position device CAD origin at device_height above the floor (world z=0). -->
+  <joint name="unchained_junior_joint" type="fixed">
+    <parent link="world"/>
+    <child link="unchained_junior"/>
+    <origin xyz="0 0 $(arg device_height)" rpy="1.5708 0 0"/>
+  </joint>
+
+  <!-- Deck markers — coordinates in METERS (mm/1000), in SW frame -->
+  <xacro:macro name="deck_marker" params="name x y z">
+    <link name="${name}">
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry><sphere radius="0.012"/></geometry>
+        <material name="${name}_color"><color rgba="1.0 0.5 0 1.0"/></material>
+      </visual>
+    </link>
+    <joint name="${name}_joint" type="fixed">
+      <parent link="unchained_junior"/>
+      <child link="${name}"/>
+      <origin xyz="${x + dx} ${y + dy} ${z + dz}" rpy="0 0 0"/>
+    </joint>
+  </xacro:macro>
+
+  <!-- Deck 9-10 -->
+  <xacro:deck_marker name="deck_9_10_pos1"  x="0.0704" y="0.26992" z="0.92015"/>
+  <xacro:deck_marker name="deck_9_10_pos2"  x="0.0704" y="0.26992" z="0.76962"/>
+  <xacro:deck_marker name="deck_9_10_pos3"  x="0.0704" y="0.26992" z="0.61915"/>
+
+  <!-- Deck 11-12 Vortex -->
+  <xacro:deck_marker name="deck_vortex_pos1" x="0.19001" y="0.26004" z="0.92009"/>
+  <xacro:deck_marker name="deck_vortex_pos2" x="0.19001" y="0.26004" z="0.77009"/>
+  <xacro:deck_marker name="deck_vortex_pos3" x="0.19001" y="0.26004" z="0.62009"/>
+
+  <!-- Vacuum filtration -->
+  <xacro:deck_marker name="deck_vacuum_filtration" x="0.31345" y="0.26956" z="0.69374"/>
+
+  <!-- =============== Vention Pedestal =============== -->
+  <!-- Pedestal mounting top in Unchained CAD frame (Y-up, mm):
+         x = 73.98, y = 315.33, z = 1265.27
+       Pedestal STL has its origin at the TOP mounting surface; extends Y
+       downward by 945mm to the floor. -->
+  <xacro:arg name="include_pedestal" default="true"/>
+
+  <xacro:if value="${'$(arg include_pedestal)' == 'true'}">
+    <link name="pedestal">
+      <inertial>
+        <mass value="40.0"/>
+        <inertia ixx="3.0" ixy="0" ixz="0" iyy="3.0" iyz="0" izz="3.0"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="package://fr_test_cell/meshes/vention_pedestal_visual.stl"
+                scale="0.001 0.001 0.001"/>
+        </geometry>
+        <material name="aluminum"><color rgba="0.75 0.75 0.80 1.0"/></material>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="package://fr_test_cell/meshes/vention_pedestal_collision.stl"
+                scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <joint name="pedestal_joint" type="fixed">
+      <parent link="unchained_junior"/>
+      <child link="pedestal"/>
+      <origin xyz="0.07398 0.31533 1.26527" rpy="0 0 0"/>
+    </joint>
+  </xacro:if>
+
+</robot>

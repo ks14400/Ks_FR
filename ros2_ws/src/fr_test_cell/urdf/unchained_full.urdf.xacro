@@ -1,0 +1,368 @@
+<?xml version="1.0"?>
+<!--
+  Unchained build + FR16 robot mounted on Vention pedestal.
+
+  Layout:
+    - World origin = floor (z=0)
+    - Unchained Junior CAD origin at world (0, 0, 0.629675)
+    - Pedestal at CAD (73.98, 315.33, 1265.27) — child of Unchained
+    - Robot mounted at pedestal top (which is the pedestal's local origin)
+    - Robot's mounting yaw is tunable to match real-world mounting orientation
+
+  Real-world workflow:
+    Mount the FR16 on the Vention pedestal physically such that its "front"
+    face (where the arm extends when j1=0) points in the same direction
+    as in this simulation. Use robot_mount_yaw_deg to tune in sim, then
+    physically rotate the real robot to match.
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="fairino16_v6_robot">
+
+  <xacro:arg name="robot_model" default="fr16"/>
+  <xacro:arg name="control_mode" default="mock"/>
+  <xacro:arg name="device_height" default="0.629675"/>
+  <!-- Real FR16 is bolted to the pedestal plate rotated -45deg (connector on
+       the right, parallel to the Unchained). Verified against hardware. -->
+  <xacro:arg name="robot_mount_yaw_deg" default="-45"/>
+  <!-- Robot mount offset within pedestal frame.
+       Pedestal STL origin sits at a corner; the mounting plate CENTER is at:
+         X_center = (-323 + 97) / 2  = -113 mm
+         Y_center = 0 (top)
+         Z_center = (182 + 602) / 2  = +392 mm
+       Override these if the actual mounting point differs. -->
+  <xacro:arg name="robot_mount_x" default="-0.113"/>
+  <xacro:arg name="robot_mount_y" default="0.0"/>
+  <xacro:arg name="robot_mount_z" default="0.392"/>
+
+  <!-- AG-145 gripper attached to wrist3_link -->
+  <xacro:arg name="include_gripper" default="true"/>
+  <xacro:arg name="gripper_mount_x" default="0.0"/>
+  <xacro:arg name="gripper_mount_y" default="0.0"/>
+  <!-- wrist3_link origin = j6 axis (wrist2 side). Tool flange is at +Z=0.1.
+       +5 mm for the physical flange plate between wrist3 and gripper base. -->
+  <xacro:arg name="gripper_mount_z" default="0.105"/>
+  <xacro:arg name="gripper_mount_roll" default="0.0"/>
+  <xacro:arg name="gripper_mount_pitch" default="0.0"/>
+  <xacro:arg name="gripper_mount_yaw" default="0.0"/>
+  <xacro:arg name="initial_positions_file"
+             default="$(find fairino16_v6_moveit2_config)/config/initial_positions.yaml"/>
+
+  <xacro:property name="robot_num" value="${'$(arg robot_model)'[2:]}"/>
+  <xacro:property name="mount_yaw_deg" value="$(arg robot_mount_yaw_deg)"/>
+  <xacro:property name="mount_yaw_rad" value="${float(mount_yaw_deg) * pi / 180.0}"/>
+
+  <!-- ================ World ================ -->
+  <link name="world"/>
+
+  <!-- ================ Unchained Junior ================ -->
+  <link name="unchained_junior">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://fr_test_cell/meshes/unchained_junior_visual.stl"
+              scale="0.001 0.001 0.001"/>
+      </geometry>
+      <material name="grey"><color rgba="0.6 0.6 0.65 1.0"/></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://fr_test_cell/meshes/unchained_junior_collision.stl"
+              scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="80.0"/>
+      <inertia ixx="10.0" ixy="0" ixz="0" iyy="10.0" iyz="0" izz="10.0"/>
+    </inertial>
+  </link>
+
+  <!-- Y-up → Z-up rotation, lifted to floor clearance -->
+  <joint name="unchained_junior_joint" type="fixed">
+    <parent link="world"/>
+    <child link="unchained_junior"/>
+    <origin xyz="0 0 $(arg device_height)" rpy="1.5708 0 0"/>
+  </joint>
+
+  <!-- ================ Deck markers (CAD frame) ================ -->
+  <xacro:macro name="deck_marker" params="name x y z">
+    <link name="${name}">
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry><sphere radius="0.012"/></geometry>
+        <material name="${name}_color"><color rgba="1.0 0.5 0 1.0"/></material>
+      </visual>
+    </link>
+    <joint name="${name}_joint" type="fixed">
+      <parent link="unchained_junior"/>
+      <child link="${name}"/>
+      <origin xyz="${x} ${y} ${z}" rpy="0 0 0"/>
+    </joint>
+  </xacro:macro>
+
+  <xacro:deck_marker name="deck_9_10_pos1"      x="0.0704"   y="0.26992" z="0.92015"/>
+  <xacro:deck_marker name="deck_9_10_pos2"      x="0.0704"   y="0.26992" z="0.76962"/>
+  <xacro:deck_marker name="deck_9_10_pos3"      x="0.0704"   y="0.26992" z="0.61915"/>
+  <xacro:deck_marker name="deck_vortex_pos1"    x="0.19001"  y="0.26004" z="0.92009"/>
+  <xacro:deck_marker name="deck_vortex_pos2"    x="0.19001"  y="0.26004" z="0.77009"/>
+  <xacro:deck_marker name="deck_vortex_pos3"    x="0.19001"  y="0.26004" z="0.62009"/>
+  <xacro:deck_marker name="deck_vacuum_filtration" x="0.31345" y="0.26956" z="0.69374"/>
+
+  <!-- ============ Fixed obstacle next to deck_9_10_pos1 ============
+       A physical cuboid present on the real machine beside deck 9-10 pos 1.
+       Offset + size were measured in SolidWorks (CAD frame) relative to the
+       deck 1 CENTER. The deck marker frame shares the CAD axis orientation
+       (deck markers are rpy=0 children of unchained_junior, which carries the
+       CAD Y-up frame), so SolidWorks X/Y/Z map in directly — no axis swap;
+       the CAD->world Z-up conversion is handled by unchained_junior_joint.
+       SolidWorks center offset from deck1: x=-90, y=11.63, z=22.88 mm
+       Measured SolidWorks dims (x,y,z): 28.4 x 65 x 120 mm.
+       Box PADDED over the measured size for clearance (keep it big so the arm
+       reliably avoids the real obstacle): X 28.4->40, Y 65->100, Z 120->160.
+       Centered on the measured artifact center. NOTE: at this size the box
+       intrudes into the corridor the arm uses for deck_vortex_pos1 — handled
+       by raising that approach, not by shrinking the box.
+       Box origin = link frame = artifact center (offset is to the center). -->
+  <link name="obstacle_deck1">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><box size="0.040 0.100 0.160"/></geometry>
+      <material name="obstacle_deck1_color"><color rgba="0.85 0.1 0.1 0.55"/></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><box size="0.040 0.100 0.160"/></geometry>
+    </collision>
+  </link>
+  <joint name="obstacle_deck1_joint" type="fixed">
+    <parent link="deck_9_10_pos1"/>
+    <child link="obstacle_deck1"/>
+    <origin xyz="-0.090 0.01163 0.02288" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ================ Lab table (loading station) ================
+       A 30×30×70 cm box next to the pedestal. The plate gets staged here
+       on the way out of (or into) the Unchained device.
+
+       Table position is in WORLD frame (Z-up). The `table_top` frame is a
+       child of `table` with rpy="1.5708 0 0" so its local +Y axis points
+       up in world — same convention as deck markers. That lets the existing
+       attach_plate_to_deck() logic work without special-casing the table.
+
+       Tunable via include_table arg (default true) and the table_*_xyz args. -->
+  <xacro:arg name="include_table" default="true"/>
+  <xacro:arg name="table_x" default="0.7"/>
+  <xacro:arg name="table_y" default="-1.3"/>
+  <xacro:arg name="table_z" default="0.0"/>
+  <xacro:arg name="table_w" default="0.30"/>     <!-- width  (X) -->
+  <xacro:arg name="table_d" default="0.30"/>     <!-- depth  (Y) -->
+  <xacro:arg name="table_h" default="0.70"/>     <!-- height (Z) -->
+
+  <xacro:if value="${'$(arg include_table)' == 'true'}">
+    <xacro:property name="tw" value="$(arg table_w)"/>
+    <xacro:property name="td" value="$(arg table_d)"/>
+    <xacro:property name="th" value="$(arg table_h)"/>
+
+    <link name="table">
+      <visual>
+        <origin xyz="0 0 ${th/2}" rpy="0 0 0"/>
+        <geometry><box size="${tw} ${td} ${th}"/></geometry>
+        <material name="wood"><color rgba="0.55 0.35 0.18 1.0"/></material>
+      </visual>
+      <collision>
+        <origin xyz="0 0 ${th/2}" rpy="0 0 0"/>
+        <geometry><box size="${tw} ${td} ${th}"/></geometry>
+      </collision>
+      <inertial>
+        <mass value="20.0"/>
+        <inertia ixx="1.0" ixy="0" ixz="0" iyy="1.0" iyz="0" izz="0.5"/>
+      </inertial>
+    </link>
+    <joint name="table_joint" type="fixed">
+      <parent link="world"/>
+      <child link="table"/>
+      <origin xyz="$(arg table_x) $(arg table_y) $(arg table_z)" rpy="0 0 0"/>
+    </joint>
+
+    <!-- table_top: green sphere at the top-center of the table, Y-up frame -->
+    <link name="table_top">
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry><sphere radius="0.012"/></geometry>
+        <material name="table_top_color"><color rgba="0.0 1.0 0.0 1.0"/></material>
+      </visual>
+    </link>
+    <joint name="table_top_joint" type="fixed">
+      <parent link="table"/>
+      <child link="table_top"/>
+      <!-- xyz: at top-center of table. rpy="π/2 0 0" rotates so table_top
+           local +Y points along world +Z (up). -->
+      <origin xyz="0 0 ${th}" rpy="1.5708 0 0"/>
+    </joint>
+  </xacro:if>
+
+  <!-- ================ Well-plate model ================
+       96-well SBS standard plate: 85.5 × 127.8 × 14 mm.
+
+       Frame convention: the deck marker's parent (unchained_junior) is CAD Y-up,
+       so:
+         - "vertical" in world  = unchained +Y (the plate's thickness axis)
+         - plate footprint lies in the unchained X–Z plane
+
+       Box size below uses (X, Y, Z) = (85.5, 14, 127.8) mm.
+       The plate's origin defaults to its geometric center, so we offset +Y by
+       half the thickness so the plate's BOTTOM sits flush on the deck marker.
+       Default OFF: pick_place.py manages the plate as a CollisionObject so it
+       can move with the gripper. Re-enable with include_plate:=true if you just
+       want a static viewer. -->
+  <xacro:arg name="include_plate" default="false"/>
+
+  <xacro:macro name="well_plate" params="name parent_deck">
+    <link name="${name}">
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <box size="0.0855 0.025 0.1278"/>
+        </geometry>
+        <material name="${name}_color"><color rgba="0.92 0.92 0.95 1.0"/></material>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <box size="0.0855 0.025 0.1278"/>
+        </geometry>
+      </collision>
+      <inertial>
+        <mass value="0.080"/>
+        <inertia ixx="0.0001" ixy="0" ixz="0" iyy="0.0001" iyz="0" izz="0.0001"/>
+      </inertial>
+    </link>
+    <joint name="${name}_joint" type="fixed">
+      <parent link="${parent_deck}"/>
+      <child link="${name}"/>
+      <!-- +Y is "up" in the deck frame; raise the plate by half its height (25mm/2)
+           so its bottom face is flush with the deck dot. -->
+      <origin xyz="0 0.0125 0" rpy="0 0 0"/>
+    </joint>
+  </xacro:macro>
+
+  <xacro:if value="${'$(arg include_plate)' == 'true'}">
+    <xacro:well_plate name="plate_9_10_pos1" parent_deck="deck_9_10_pos1"/>
+  </xacro:if>
+
+  <!-- ================ Vention Pedestal ================ -->
+  <link name="pedestal">
+    <inertial>
+      <mass value="40.0"/>
+      <inertia ixx="3.0" ixy="0" ixz="0" iyy="3.0" iyz="0" izz="3.0"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://fr_test_cell/meshes/vention_pedestal_visual.stl"
+              scale="0.001 0.001 0.001"/>
+      </geometry>
+      <material name="aluminum"><color rgba="0.75 0.75 0.80 1.0"/></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://fr_test_cell/meshes/vention_pedestal_collision.stl"
+              scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Pedestal origin in Unchained frame: X=400 mm, Y=315.33 mm, Z=1138.27 mm.
+       X shifted from 73.98 → 400 mm. Z brought 127 mm (5") closer than original 1265.27. -->
+  <joint name="pedestal_joint" type="fixed">
+    <parent link="unchained_junior"/>
+    <child link="pedestal"/>
+    <origin xyz="0.400 0.31533 1.13827" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ================ FR16 robot (arm chain only, no world link) ================ -->
+  <!--
+    The arm chain is rooted at base_link. We mount it on the pedestal.
+    The pedestal frame is in CAD convention (Y-up) since it's a child of
+    unchained_junior. The robot's base_link expects ROS convention (Z-up).
+    So we need a roll = -π/2 rotation to convert pedestal Y-up → robot Z-up.
+    Plus an optional yaw to match real-world mounting orientation.
+  -->
+  <xacro:include filename="$(find fr_test_cell)/urdf/fairino_armonly/fairino${robot_num}_v6_armonly.urdf"/>
+
+  <joint name="robot_mount_joint" type="fixed">
+    <parent link="pedestal"/>
+    <child link="base_link"/>
+    <!-- xyz: centered on pedestal mounting plate (defaults computed above)
+         roll=-π/2 converts pedestal Y-up to robot Z-up.
+         Mount rotation goes in the PITCH slot, NOT yaw: the pedestal frame is
+         Y-up, so its VERTICAL axis is Y. URDF rpy applies yaw about the parent
+         Z (which is horizontal here) — that would TIP the arm. Pitch rotates
+         about the parent Y axis = true vertical, spinning the robot in place.
+         Net transform Ry(angle)*Rx(-π/2) keeps base_link Z pointing up for any
+         angle and turns the robot about vertical. -->
+    <origin xyz="$(arg robot_mount_x) $(arg robot_mount_y) $(arg robot_mount_z)"
+            rpy="-1.5708 ${mount_yaw_rad} 0"/>
+  </joint>
+
+  <!-- ================ ros2_control ================ -->
+  <xacro:property name="initial_positions"
+                  value="${load_yaml('$(arg initial_positions_file)')['initial_positions']}"/>
+
+  <ros2_control name="FairinoSystem" type="system">
+    <hardware>
+      <xacro:if value="${'$(arg control_mode)' == 'mock'}">
+        <plugin>mock_components/GenericSystem</plugin>
+      </xacro:if>
+      <xacro:if value="${'$(arg control_mode)' == 'gazebo'}">
+        <plugin>gz_ros2_control/GazeboSimSystem</plugin>
+      </xacro:if>
+      <xacro:if value="${'$(arg control_mode)' == 'hardware'}">
+        <plugin>fairino_hardware/FairinoHardwareInterface</plugin>
+      </xacro:if>
+    </hardware>
+    <xacro:macro name="joint_iface" params="jname">
+      <joint name="${jname}">
+        <command_interface name="position"/>
+        <state_interface name="position">
+          <param name="initial_value">${initial_positions[jname]}</param>
+        </state_interface>
+      </joint>
+    </xacro:macro>
+    <xacro:joint_iface jname="j1"/>
+    <xacro:joint_iface jname="j2"/>
+    <xacro:joint_iface jname="j3"/>
+    <xacro:joint_iface jname="j4"/>
+    <xacro:joint_iface jname="j5"/>
+    <xacro:joint_iface jname="j6"/>
+
+    <!-- Gripper master joint: mimics propagate inside MoveIt's planning model via URDF. -->
+    <xacro:if value="${'$(arg include_gripper)' == 'true'}">
+      <joint name="gripper_finger1_joint">
+        <command_interface name="position"/>
+        <state_interface name="position">
+          <param name="initial_value">0.0</param>
+        </state_interface>
+      </joint>
+    </xacro:if>
+  </ros2_control>
+
+  <xacro:if value="${'$(arg control_mode)' == 'gazebo'}">
+    <gazebo>
+      <plugin filename="libign_ros2_control-system.so"
+              name="gz_ros2_control::GazeboSimROS2ControlPlugin">
+        <parameters>$(find fairino${robot_num}_v6_moveit2_config)/config/ros2_controllers.yaml</parameters>
+      </plugin>
+    </gazebo>
+  </xacro:if>
+
+  <!-- ============ AG-145 Gripper attached to wrist3_link ============ -->
+  <xacro:if value="${'$(arg include_gripper)' == 'true'}">
+    <xacro:include filename="$(find fr_test_cell)/urdf/dh_ag145_macro.xacro"/>
+    <xacro:dh_ag145_gripper parent="wrist3_link" prefix="">
+      <origin xyz="$(arg gripper_mount_x) $(arg gripper_mount_y) $(arg gripper_mount_z)"
+              rpy="$(arg gripper_mount_roll) $(arg gripper_mount_pitch) $(arg gripper_mount_yaw)"/>
+    </xacro:dh_ag145_gripper>
+  </xacro:if>
+
+</robot>

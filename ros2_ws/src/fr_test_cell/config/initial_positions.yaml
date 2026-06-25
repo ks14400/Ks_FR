@@ -1,0 +1,15 @@
+# Initial joint positions for the arm at launch time.
+#
+# Matches HOME_JOINTS in pick_place.py. Wrist values (j4, j5, j6) chosen
+# so the gripper-Z points world-DOWN — keeps the attached plate HORIZONTAL.
+# Only j1 differs from the working pickup IK (set to 0 for neutral facing).
+#
+# Reference IK (deck_9_10_pos1 approach, plate verified flat):
+#   j1=-1.478, j2=-1.096, j3=+1.906, j4=-2.381, j5=-1.571, j6=+0.093
+initial_positions:
+  j1: 0.785       # +45deg, cancels -45deg pedestal mount → home faces workspace
+  j2: -1.1        # shoulder
+  j3: 1.9         # elbow
+  j4: -2.4        # wrist roll  — KEY for plate-flat
+  j5: -1.571      # wrist pitch — gripper points down
+  j6: 0.1

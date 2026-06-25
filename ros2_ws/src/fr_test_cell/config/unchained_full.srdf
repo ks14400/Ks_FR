@@ -1,0 +1,163 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Unchained-full SRDF.
+  Extends upstream fairino16_v6_robot.srdf with:
+    - "gripper" planning group (gripper_finger1_joint master)
+    - open / closed named states
+    - end_effector declaration
+    - collision disables for AG-145 internals + adjacency with wrist3
+-->
+<robot name="fairino16_v6_robot">
+
+  <!-- ============== Arm group (unchanged from upstream) ============== -->
+  <group name="fairino16_v6_group">
+    <joint name="j1"/>
+    <joint name="j2"/>
+    <joint name="j3"/>
+    <joint name="j4"/>
+    <joint name="j5"/>
+    <joint name="j6"/>
+    <chain base_link="base_link" tip_link="wrist3_link"/>
+  </group>
+
+  <group_state name="pos1" group="fairino16_v6_group">
+    <joint name="j1" value="2.0081"/>
+    <joint name="j2" value="-1.6503"/>
+    <joint name="j3" value="1.7339"/>
+    <joint name="j4" value="-1.6002"/>
+    <joint name="j5" value="-1.1981"/>
+    <joint name="j6" value="0"/>
+  </group_state>
+  <group_state name="pos2" group="fairino16_v6_group">
+    <joint name="j1" value="0.9956"/>
+    <joint name="j2" value="-1.525"/>
+    <joint name="j3" value="1.5465"/>
+    <joint name="j4" value="-1.8258"/>
+    <joint name="j5" value="-1.4006"/>
+    <joint name="j6" value="0"/>
+  </group_state>
+
+  <!-- ============== Gripper group (AG-145) ============== -->
+  <group name="gripper">
+    <joint name="gripper_finger1_joint"/>
+  </group>
+
+  <!-- 0.0 = fully open, -0.65 = fully closed (per URDF limit) -->
+  <group_state name="open" group="gripper">
+    <joint name="gripper_finger1_joint" value="0.0"/>
+  </group_state>
+  <group_state name="closed" group="gripper">
+    <joint name="gripper_finger1_joint" value="-0.65"/>
+  </group_state>
+
+  <end_effector name="ag145" parent_link="wrist3_link"
+                group="gripper" parent_group="fairino16_v6_group"/>
+
+  <!-- ============== Disable collisions: arm (upstream pairs) ============== -->
+  <disable_collisions link1="base_link" link2="shoulder_link" reason="Adjacent"/>
+  <disable_collisions link1="base_link" link2="upperarm_link" reason="Never"/>
+  <disable_collisions link1="base_link" link2="wrist1_link" reason="Never"/>
+  <disable_collisions link1="forearm_link" link2="shoulder_link" reason="Never"/>
+  <disable_collisions link1="forearm_link" link2="upperarm_link" reason="Adjacent"/>
+  <disable_collisions link1="forearm_link" link2="wrist1_link" reason="Adjacent"/>
+  <disable_collisions link1="shoulder_link" link2="upperarm_link" reason="Adjacent"/>
+  <disable_collisions link1="shoulder_link" link2="wrist1_link" reason="Never"/>
+  <disable_collisions link1="wrist1_link" link2="wrist2_link" reason="Adjacent"/>
+  <disable_collisions link1="wrist1_link" link2="wrist3_link" reason="Never"/>
+  <disable_collisions link1="wrist2_link" link2="wrist3_link" reason="Adjacent"/>
+
+  <!-- ============== Disable collisions: gripper internals ============== -->
+  <disable_collisions link1="gripper_base_link" link2="wrist3_link" reason="Adjacent"/>
+  <disable_collisions link1="gripper_base_link" link2="wrist2_link" reason="Never"/>
+
+  <disable_collisions link1="gripper_base_link" link2="gripper_finger1_knuckle_link" reason="Adjacent"/>
+  <disable_collisions link1="gripper_base_link" link2="gripper_finger2_knuckle_link" reason="Adjacent"/>
+  <disable_collisions link1="gripper_base_link" link2="gripper_finger1_inner_knuckle_link" reason="Adjacent"/>
+  <disable_collisions link1="gripper_base_link" link2="gripper_finger2_inner_knuckle_link" reason="Adjacent"/>
+  <disable_collisions link1="gripper_base_link" link2="gripper_finger1_finger_link" reason="Never"/>
+  <disable_collisions link1="gripper_base_link" link2="gripper_finger2_finger_link" reason="Never"/>
+  <disable_collisions link1="gripper_base_link" link2="gripper_finger1_finger_tip_link" reason="Never"/>
+  <disable_collisions link1="gripper_base_link" link2="gripper_finger2_finger_tip_link" reason="Never"/>
+
+  <disable_collisions link1="gripper_finger1_knuckle_link" link2="gripper_finger1_finger_link" reason="Adjacent"/>
+  <disable_collisions link1="gripper_finger2_knuckle_link" link2="gripper_finger2_finger_link" reason="Adjacent"/>
+  <disable_collisions link1="gripper_finger1_inner_knuckle_link" link2="gripper_finger1_finger_tip_link" reason="Adjacent"/>
+  <disable_collisions link1="gripper_finger2_inner_knuckle_link" link2="gripper_finger2_finger_tip_link" reason="Adjacent"/>
+
+  <disable_collisions link1="gripper_finger1_knuckle_link" link2="gripper_finger1_inner_knuckle_link" reason="Never"/>
+  <disable_collisions link1="gripper_finger1_knuckle_link" link2="gripper_finger1_finger_tip_link" reason="Never"/>
+  <disable_collisions link1="gripper_finger1_finger_link" link2="gripper_finger1_inner_knuckle_link" reason="Never"/>
+  <disable_collisions link1="gripper_finger1_finger_link" link2="gripper_finger1_finger_tip_link" reason="Never"/>
+  <disable_collisions link1="gripper_finger2_knuckle_link" link2="gripper_finger2_inner_knuckle_link" reason="Never"/>
+  <disable_collisions link1="gripper_finger2_knuckle_link" link2="gripper_finger2_finger_tip_link" reason="Never"/>
+  <disable_collisions link1="gripper_finger2_finger_link" link2="gripper_finger2_inner_knuckle_link" reason="Never"/>
+  <disable_collisions link1="gripper_finger2_finger_link" link2="gripper_finger2_finger_tip_link" reason="Never"/>
+
+  <!-- Cross-side: fingers facing each other should still check collision when closed -->
+  <!-- We DO NOT disable finger1↔finger2 pairs — that's the whole point of the gripper -->
+
+  <!-- ============== "the_plate" (managed CollisionObject) ↔ everything ==============
+       The plate is added at runtime by pick_place.py with id="the_plate".
+       MoveIt may warn that the link is not in URDF — that is expected; the
+       disable still applies when the CollisionObject appears in the scene. -->
+  <disable_collisions link1="the_plate" link2="gripper_base_link" reason="Allowed for grasp"/>
+  <disable_collisions link1="the_plate" link2="gripper_finger1_knuckle_link" reason="Allowed for grasp"/>
+  <disable_collisions link1="the_plate" link2="gripper_finger2_knuckle_link" reason="Allowed for grasp"/>
+  <disable_collisions link1="the_plate" link2="gripper_finger1_inner_knuckle_link" reason="Allowed for grasp"/>
+  <disable_collisions link1="the_plate" link2="gripper_finger2_inner_knuckle_link" reason="Allowed for grasp"/>
+  <disable_collisions link1="the_plate" link2="gripper_finger1_finger_link" reason="Allowed for grasp"/>
+  <disable_collisions link1="the_plate" link2="gripper_finger2_finger_link" reason="Allowed for grasp"/>
+  <disable_collisions link1="the_plate" link2="gripper_finger1_finger_tip_link" reason="Allowed for grasp"/>
+  <disable_collisions link1="the_plate" link2="gripper_finger2_finger_tip_link" reason="Allowed for grasp"/>
+
+  <!-- Plate sits flush on the deck — expected contact, not a real collision. -->
+  <disable_collisions link1="the_plate" link2="unchained_junior" reason="Adjacent"/>
+
+  <!-- Arm links won't be physically near the plate in valid grasp configs,
+       but MoveIt's IK sampler may probe configs that pass close — and a
+       conservative collision mesh would reject them. Whitelist. -->
+  <disable_collisions link1="the_plate" link2="base_link" reason="Never"/>
+  <disable_collisions link1="the_plate" link2="shoulder_link" reason="Never"/>
+  <disable_collisions link1="the_plate" link2="upperarm_link" reason="Never"/>
+  <disable_collisions link1="the_plate" link2="forearm_link" reason="Never"/>
+  <disable_collisions link1="the_plate" link2="wrist1_link" reason="Never"/>
+  <disable_collisions link1="the_plate" link2="wrist2_link" reason="Never"/>
+  <disable_collisions link1="the_plate" link2="wrist3_link" reason="Never"/>
+  <disable_collisions link1="the_plate" link2="pedestal" reason="Never"/>
+
+  <!-- ============== Gripper enters Unchained's deck slots ==============
+       The unchained STL is the outer hull (slots are not carved out), so the
+       gripper appears to "collide" when it reaches into a deck. In reality the
+       gripper fits inside the slot opening. Whitelist these pairs. -->
+  <disable_collisions link1="unchained_junior" link2="gripper_base_link" reason="Slot clearance"/>
+  <disable_collisions link1="unchained_junior" link2="gripper_finger1_knuckle_link" reason="Slot clearance"/>
+  <disable_collisions link1="unchained_junior" link2="gripper_finger2_knuckle_link" reason="Slot clearance"/>
+  <disable_collisions link1="unchained_junior" link2="gripper_finger1_inner_knuckle_link" reason="Slot clearance"/>
+  <disable_collisions link1="unchained_junior" link2="gripper_finger2_inner_knuckle_link" reason="Slot clearance"/>
+  <disable_collisions link1="unchained_junior" link2="gripper_finger1_finger_link" reason="Slot clearance"/>
+  <disable_collisions link1="unchained_junior" link2="gripper_finger2_finger_link" reason="Slot clearance"/>
+  <disable_collisions link1="unchained_junior" link2="gripper_finger1_finger_tip_link" reason="Slot clearance"/>
+  <disable_collisions link1="unchained_junior" link2="gripper_finger2_finger_tip_link" reason="Slot clearance"/>
+
+  <!-- ============== Gripper picks/places on the lab table ==============
+       Same idea as the unchained slot clearance — when the gripper descends
+       to pick or place on the table top, the fingertip pad mesh can intersect
+       the table top surface by a few mm. Whitelist so Cartesian descent works. -->
+  <disable_collisions link1="table" link2="gripper_base_link" reason="Pick/place clearance"/>
+  <disable_collisions link1="table" link2="gripper_finger1_knuckle_link" reason="Pick/place clearance"/>
+  <disable_collisions link1="table" link2="gripper_finger2_knuckle_link" reason="Pick/place clearance"/>
+  <disable_collisions link1="table" link2="gripper_finger1_inner_knuckle_link" reason="Pick/place clearance"/>
+  <disable_collisions link1="table" link2="gripper_finger2_inner_knuckle_link" reason="Pick/place clearance"/>
+  <disable_collisions link1="table" link2="gripper_finger1_finger_link" reason="Pick/place clearance"/>
+  <disable_collisions link1="table" link2="gripper_finger2_finger_link" reason="Pick/place clearance"/>
+  <disable_collisions link1="table" link2="gripper_finger1_finger_tip_link" reason="Pick/place clearance"/>
+  <disable_collisions link1="table" link2="gripper_finger2_finger_tip_link" reason="Pick/place clearance"/>
+
+  <!-- ============ Fixed obstacle near deck 1 ============
+       obstacle_deck1 is mounted on the Unchained, so it permanently touches
+       the machine's collision mesh — disable that static pair so it doesn't
+       read as an always-on self-collision. It stays ENABLED against the arm,
+       gripper, and plate (those must avoid it). -->
+  <disable_collisions link1="obstacle_deck1" link2="unchained_junior" reason="Mounted on machine"/>
+
+</robot>

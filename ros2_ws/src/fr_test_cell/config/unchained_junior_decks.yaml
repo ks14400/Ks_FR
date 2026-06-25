@@ -1,0 +1,36 @@
+# Unchained Junior deck positions
+# Coordinates in MILLIMETERS, in the part's DEFAULT origin frame.
+# Y is up (SolidWorks convention).
+# Origin is approximately at floor level (Y_min in STL ≈ 7mm).
+
+device_name: unchained_junior
+mesh_visual: unchained_junior_visual.stl
+mesh_collision: unchained_junior_collision.stl
+
+decks:
+  # Deck 9-10
+  deck_9_10_pos1:
+    xyz_mm: [70.4, 269.92, 920.15]
+    description: "Deck 9-10, position 1"
+  deck_9_10_pos2:
+    xyz_mm: [70.4, 269.92, 769.62]
+    description: "Deck 9-10, position 2"
+  deck_9_10_pos3:
+    xyz_mm: [70.4, 269.92, 619.15]
+    description: "Deck 9-10, position 3"
+
+  # Deck 11-12 Vortex
+  vortex_pos1:
+    xyz_mm: [190.01, 260.04, 920.09]
+    description: "Vortex, position 1"
+  vortex_pos2:
+    xyz_mm: [190.01, 260.04, 770.09]
+    description: "Vortex, position 2"
+  vortex_pos3:
+    xyz_mm: [190.01, 260.04, 620.09]
+    description: "Vortex, position 3"
+
+  # Vacuum filtration
+  vacuum_filtration:
+    xyz_mm: [313.45, 269.56, 693.74]
+    description: "Vacuum filtration station"

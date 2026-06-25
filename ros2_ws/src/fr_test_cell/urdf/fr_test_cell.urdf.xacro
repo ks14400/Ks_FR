@@ -1,0 +1,192 @@
+<?xml version="1.0"?>
+<!--
+  Test cell scene: Fairino FR16 mounted on a 585mm static pedestal.
+
+  Coordinate system:
+    - "world" link = robot base mounting surface (top of pedestal)
+    - Floor is at z = -0.585 (below world)
+    - Pedestal extends from floor (z=-0.585) up to world (z=0)
+    - Robot base_link is at world origin (on top of pedestal)
+
+  To add a test object, uncomment or copy the example block at the bottom.
+
+  Usage:
+    xacro fr_test_cell.urdf.xacro robot_model:=fr16 control_mode:=gazebo
+    xacro fr_test_cell.urdf.xacro robot_model:=fr10 control_mode:=mock
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="fairino_v6_robot">
+
+  <xacro:arg name="robot_model" default="fr16"/>   <!-- fr10 | fr16 | fr20 -->
+  <xacro:arg name="control_mode" default="mock"/>  <!-- mock | gazebo | hardware -->
+
+  <xacro:property name="robot_num" value="${'$(arg robot_model)'[2:]}"/>
+
+  <!-- Pedestal pose (STL is 405×585×405mm; 585mm dim is along STL's Y axis,
+       so we roll 90° to stand it up, then translate to center under robot base
+       with its top at world origin). Override via xacro args if needed. -->
+  <xacro:arg name="pedestal_x"     default="-0.2025"/>   <!-- -405/2 = center X -->
+  <xacro:arg name="pedestal_y"     default="0.2025"/>    <!-- +405/2 (post-roll) -->
+  <xacro:arg name="pedestal_z"     default="-0.585"/>    <!-- bottom of pedestal -->
+  <xacro:arg name="pedestal_roll"  default="1.5708"/>    <!-- 90° to stand up -->
+  <xacro:arg name="pedestal_pitch" default="0"/>
+  <xacro:arg name="pedestal_yaw"   default="0"/>
+
+  <xacro:arg name="initial_positions_file"
+             default="$(find fairino20_v6_moveit2_config)/config/initial_positions.yaml"/>
+
+  <!-- ================= Robot Arm ================= -->
+  <!-- The fairino URDF brings in: world link → fixed joint → base_link at origin.
+       We attach our pedestal to the same "world" link, extending DOWNWARD. -->
+  <xacro:include filename="$(find fairino_description)/urdf/fairino${robot_num}_v6.urdf"/>
+
+  <!-- ================= Pedestal (Vention 585mm, from STL) ================= -->
+  <link name="pedestal">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://fr_test_cell/meshes/pedestal_585mm.stl"
+              scale="0.001 0.001 0.001"/>
+      </geometry>
+      <material name="aluminum">
+        <color rgba="0.75 0.75 0.80 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://fr_test_cell/meshes/pedestal_585mm.stl"
+              scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="30.0"/>
+      <inertia ixx="1.0" ixy="0" ixz="0" iyy="1.0" iyz="0" izz="1.0"/>
+    </inertial>
+  </link>
+
+  <joint name="pedestal_joint" type="fixed">
+    <parent link="world"/>
+    <child link="pedestal"/>
+    <origin xyz="$(arg pedestal_x) $(arg pedestal_y) $(arg pedestal_z)"
+            rpy="$(arg pedestal_roll) $(arg pedestal_pitch) $(arg pedestal_yaw)"/>
+  </joint>
+
+  <!-- ================= ros2_control ================= -->
+  <xacro:property name="initial_positions"
+                  value="${load_yaml('$(arg initial_positions_file)')['initial_positions']}"/>
+
+  <ros2_control name="FairinoSystem" type="system">
+    <hardware>
+      <xacro:if value="${'$(arg control_mode)' == 'mock'}">
+        <plugin>mock_components/GenericSystem</plugin>
+      </xacro:if>
+      <xacro:if value="${'$(arg control_mode)' == 'gazebo'}">
+        <plugin>gz_ros2_control/GazeboSimSystem</plugin>
+      </xacro:if>
+      <xacro:if value="${'$(arg control_mode)' == 'hardware'}">
+        <plugin>fairino_hardware/FairinoHardwareInterface</plugin>
+      </xacro:if>
+    </hardware>
+    <xacro:macro name="joint_iface" params="jname">
+      <joint name="${jname}">
+        <command_interface name="position"/>
+        <state_interface name="position">
+          <param name="initial_value">${initial_positions[jname]}</param>
+        </state_interface>
+      </joint>
+    </xacro:macro>
+    <xacro:joint_iface jname="j1"/>
+    <xacro:joint_iface jname="j2"/>
+    <xacro:joint_iface jname="j3"/>
+    <xacro:joint_iface jname="j4"/>
+    <xacro:joint_iface jname="j5"/>
+    <xacro:joint_iface jname="j6"/>
+  </ros2_control>
+
+  <xacro:if value="${'$(arg control_mode)' == 'gazebo'}">
+    <gazebo>
+      <plugin filename="libign_ros2_control-system.so"
+              name="gz_ros2_control::GazeboSimROS2ControlPlugin">
+        <parameters>$(find fairino${robot_num}_v6_moveit2_config)/config/ros2_controllers.yaml</parameters>
+      </plugin>
+    </gazebo>
+  </xacro:if>
+
+  <!-- ================= Unchained Junior Device ================= -->
+  <!-- Device pose args (override from launch) -->
+  <xacro:arg name="device_x"     default="0.8"/>
+  <xacro:arg name="device_y"     default="0.0"/>
+  <xacro:arg name="device_z"     default="0.0"/>
+  <xacro:arg name="device_roll"  default="0"/>
+  <xacro:arg name="device_pitch" default="0"/>
+  <xacro:arg name="device_yaw"   default="0"/>
+
+  <!-- Whether to include the Unchained Junior. Set to false to omit it -->
+  <xacro:arg name="include_unchained_junior" default="true"/>
+
+  <xacro:if value="${'$(arg include_unchained_junior)' == 'true'}">
+    <link name="unchained_junior">
+      <inertial>
+        <mass value="50.0"/>
+        <inertia ixx="5.0" ixy="0" ixz="0" iyy="5.0" iyz="0" izz="5.0"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="package://fr_test_cell/meshes/unchained_junior_visual.stl"
+                scale="0.001 0.001 0.001"/>
+        </geometry>
+        <material name="device_grey"><color rgba="0.6 0.6 0.65 1.0"/></material>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="package://fr_test_cell/meshes/unchained_junior_collision.stl"
+                scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <!-- Connect to base_link (NOT world) — Gazebo drops fixed children of "world" -->
+    <joint name="unchained_junior_joint" type="fixed">
+      <parent link="base_link"/>
+      <child link="unchained_junior"/>
+      <origin xyz="$(arg device_x) $(arg device_y) $(arg device_z)"
+              rpy="$(arg device_roll) $(arg device_pitch) $(arg device_yaw)"/>
+    </joint>
+
+    <!-- ============ Deck reference frames ============ -->
+    <!-- Each deck is a small frame attached to unchained_junior, at the
+         loading position. The pick-and-place app references these by name.
+         Coordinates are in METERS (mm/1000) from the YAML. -->
+
+    <xacro:macro name="deck_frame" params="name x y z roll pitch yaw">
+      <link name="deck_${name}">
+        <visual>
+          <origin xyz="0 0 0" rpy="0 0 0"/>
+          <geometry><sphere radius="0.005"/></geometry>
+          <material name="deck_marker"><color rgba="1.0 0.5 0 0.8"/></material>
+        </visual>
+      </link>
+      <joint name="deck_${name}_joint" type="fixed">
+        <parent link="unchained_junior"/>
+        <child link="deck_${name}"/>
+        <origin xyz="${x} ${y} ${z}" rpy="${roll} ${pitch} ${yaw}"/>
+      </joint>
+    </xacro:macro>
+
+    <!-- Deck 9-10 positions -->
+    <xacro:deck_frame name="9_10_pos1"  x="0.1195"  y="-0.00863" z="-0.0937"   roll="3.1416" pitch="0" yaw="0"/>
+    <xacro:deck_frame name="9_10_pos2"  x="0.1195"  y="-0.00863" z="-0.24423"  roll="3.1416" pitch="0" yaw="0"/>
+    <xacro:deck_frame name="9_10_pos3"  x="0.1195"  y="-0.00863" z="-0.3947"   roll="3.1416" pitch="0" yaw="0"/>
+
+    <!-- Vortex positions -->
+    <xacro:deck_frame name="vortex_pos1" x="0.2396" y="-0.01851" z="-0.09376"  roll="3.1416" pitch="0" yaw="0"/>
+    <xacro:deck_frame name="vortex_pos2" x="0.2396" y="-0.01851" z="-0.24376"  roll="3.1416" pitch="0" yaw="0"/>
+    <xacro:deck_frame name="vortex_pos3" x="0.2396" y="-0.01851" z="-0.39376"  roll="3.1416" pitch="0" yaw="0"/>
+
+    <!-- Vacuum filtration -->
+    <xacro:deck_frame name="vacuum_filtration" x="0.36281" y="-0.00899" z="-0.32012" roll="3.1416" pitch="0" yaw="0"/>
+  </xacro:if>
+
+</robot>

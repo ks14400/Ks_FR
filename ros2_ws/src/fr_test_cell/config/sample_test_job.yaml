@@ -1,0 +1,32 @@
+job_name: two_point_test
+robot_model: fr16
+tool_frame: wrist3_link
+
+# Safe test speeds
+speed_linear_mms: 50
+speed_joint_pct: 15
+
+# Gripper params (not used in basic test)
+gripper_open_width_mm: 85
+gripper_close_width_mm: 30
+gripper_force_n: 20
+
+# Replace these with values from waypoint_recorder after dragging the real arm
+# to the two points you want to test.
+waypoints:
+  home:
+    type: joint
+    joints_deg: [0, -45, 90, -45, -90, 0]
+  point_a:
+    type: joint
+    joints_deg: [30, -45, 90, -45, -90, 0]
+  point_b:
+    type: joint
+    joints_deg: [-30, -45, 90, -45, -90, 0]
+
+# Simple 2-point loop — go home, move to A, then to B, then back home
+sequence:
+  - home
+  - point_a
+  - point_b
+  - home

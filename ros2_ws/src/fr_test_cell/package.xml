@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>fr_test_cell</name>
+  <version>0.0.0</version>
+  <description>Test cell: Fairino arm on a 585mm pedestal for testing waypoint workflow</description>
+  <maintainer email="aimatx_nuc3@todo.todo">aimatx_nuc3</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>rclpy</depend>
+  <depend>xacro</depend>
+  <depend>fairino_description</depend>
+  <depend>fairino10_v6_moveit2_config</depend>
+  <depend>fairino16_v6_moveit2_config</depend>
+  <depend>fairino20_v6_moveit2_config</depend>
+  <depend>fr_bridge</depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+  <exec_depend>moveit_ros_move_group</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
