@@ -1,0 +1,103 @@
+<?xml version="1.0"?>
+<!--
+  PXRD (Rigaku SmartLab) instrument — GROUND-TRUTH visualization.
+
+  Step 1 of the cell build: place the instrument STL in the world so we can
+  confirm orientation, scale, and that the exported origin is where intended.
+  Mirrors the unchained_only template.
+
+  Frame convention (SAME as unchained): the STL was exported from SolidWorks
+  with a custom coordinate system as the origin, CAD Y-up. We rotate +90deg
+  about X (rpy="1.5708 0 0") to align CAD Y-up -> ROS world Z-up.
+
+  STL facts (measured): 289k triangles, MILLIMETERS (scale 0.001),
+  bbox dims 1300 x 1799 x 1008 mm, origin INSIDE the geometry
+  (offset ~618,1210,558 mm from the bbox corner).
+
+  device_height lifts the CAD origin above the floor. Default 1.21 m puts the
+  lowest CAD-Y point (bbox min Y = -1209.6 mm) on the floor (world z=0).
+  Adjust to match how the instrument actually sits in the real cell.
+
+  NOTE: only a VISUAL mesh here. The 289k-triangle mesh is too heavy for live
+  collision checking; a simplified collision mesh gets added when the arm is
+  introduced (so MoveIt can plan around it efficiently).
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="pxrd_only">
+
+  <xacro:arg name="device_height" default="1.21"/>
+
+  <link name="world"/>
+
+  <link name="pxrd_smartlab">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://pxrd_cell/meshes/smartlab_visual.stl"
+              scale="0.001 0.001 0.001"/>
+      </geometry>
+      <material name="pxrd_grey">
+        <color rgba="0.62 0.64 0.68 1.0"/>
+      </material>
+    </visual>
+  </link>
+
+  <!-- CAD Y-up -> world Z-up (+90deg about X), lifted to device_height. -->
+  <joint name="pxrd_smartlab_joint" type="fixed">
+    <parent link="world"/>
+    <child link="pxrd_smartlab"/>
+    <origin xyz="0 0 $(arg device_height)" rpy="1.5708 0 0"/>
+  </joint>
+
+  <!-- =============== Vention Pedestal =============== -->
+  <!-- Pedestal STL origin is at the TOP mounting surface (CAD Y=0 = top,
+       extends 585mm down toward the floor). 75k tris, mm.
+       Placed as a CHILD of the instrument link, which holds the CAD/SolidWorks
+       frame, so the SolidWorks origin-to-origin offset goes in DIRECTLY with
+       NO axis swap — the world->instrument +90deg X rotation carries the
+       pedestal upright too. (This is why rviz vs SolidWorks axes don't bite
+       here.)
+       Offset measured in SolidWorks (PXRD origin -> pedestal origin):
+         x=127.63, y=-624.6, z=410.12 mm  ->  meters below. -->
+  <xacro:arg name="include_pedestal" default="true"/>
+  <xacro:if value="${'$(arg include_pedestal)' == 'true'}">
+    <link name="pedestal">
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="package://pxrd_cell/meshes/pedestal_visual.stl"
+                scale="0.001 0.001 0.001"/>
+        </geometry>
+        <material name="pedestal_alu"><color rgba="0.75 0.75 0.80 1.0"/></material>
+      </visual>
+    </link>
+    <joint name="pedestal_joint" type="fixed">
+      <parent link="pxrd_smartlab"/>
+      <child link="pedestal"/>
+      <origin xyz="0.12763 -0.6246 0.41012" rpy="0 0 0"/>
+    </joint>
+  </xacro:if>
+
+  <!-- =============== FR10 arm on the pedestal =============== -->
+  <!-- The pedestal frame is CAD Y-up. The arm base_link is ROS Z-up. roll=-pi/2
+       converts pedestal Y-up -> robot Z-up. The mount yaw goes in the PITCH
+       slot (Y-up parent: the vertical axis is Y), exactly like the unchained
+       fix — yaw in the rpy yaw slot would TIP the arm.
+       Mount offset (-0.113, 0, 0.392) = top-plate center in the pedestal frame
+       (same Vention mounting interface as unchained).
+       robot_mount_yaw_deg: set to match how the arm is physically bolted
+       (unchained was -45; PXRD TBD — start at 0, adjust after viewing). -->
+  <xacro:arg name="include_arm" default="true"/>
+  <xacro:arg name="robot_mount_yaw_deg" default="0"/>
+  <xacro:property name="mount_yaw_rad"
+                  value="${float('$(arg robot_mount_yaw_deg)') * 3.14159265358979 / 180.0}"/>
+
+  <xacro:if value="${'$(arg include_arm)' == 'true'}">
+    <xacro:include filename="$(find pxrd_cell)/urdf/fairino_armonly/fairino10_v6_armonly.urdf"/>
+    <joint name="robot_mount_joint" type="fixed">
+      <parent link="pedestal"/>
+      <child link="base_link"/>
+      <origin xyz="-0.113 0 0.392" rpy="-1.5708 ${mount_yaw_rad} 0"/>
+    </joint>
+  </xacro:if>
+
+</robot>
