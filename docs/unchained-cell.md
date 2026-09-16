@@ -5,6 +5,30 @@ including real AG-145 gripper actuation, force-grip, the −45° pedestal
 mount, and a fixed obstacle. This package was previously named
 `fr_test_cell` (renamed 2026-09).
 
+## LATEST WORKING TERMINAL COMMANDS (hardware-proven 2026-06, verbatim)
+
+```bash
+# T1 — bridge:
+ros2 launch unchained_cell bridge.launch.py robot_ip:=192.168.58.2 \
+  movej_vel_pct:=20 movej_acc_pct:=30 gripper_force_pct:=40
+
+# T2 — scene + MoveIt (hardware):
+ros2 launch unchained_cell unchained_full.launch.py control_mode:=hardware \
+  table_x:=-0.3 table_y:=-1.7 table_h:=1
+
+# T3 — the job:
+ros2 run unchained_cell pick_place --source deck_9_10_pos1 --target table_top \
+  --yaw-tol 0.15 --vel 0.10 --hover 0.25 --pick-lift 0.015 --hardware
+```
+
+These exact values are baked into `./run_unchained.sh`. Position meanings:
+- `table_x:=-0.3 table_y:=-1.7 table_h:=1` — REAL measured staging-table
+  position in WORLD frame (meters), top at 1.0 m. (Old sim-only default was
+  `table_x:=-0.8 table_y:=-0.9 table_h:=1`.)
+- Pedestal origin offset from the Unchained origin (URDF `pedestal_joint`):
+  xyz = (0.400, 0.31533, 1.13827), rpy 0 — from SolidWorks origin-to-origin.
+- Robot mount: `robot_mount_yaw_deg:=-45` (default; in the PITCH slot).
+
 ## The scene
 
 - **Instrument**: Unchained Junior with 7 open deck positions:

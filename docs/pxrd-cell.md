@@ -3,6 +3,37 @@
 **Status (2026-09): full round trip validated in simulation** with strict
 collision checking and deterministic staging. Hardware bring-up pending.
 
+## LATEST WORKING TERMINAL COMMANDS (validated 2026-09-15, verbatim)
+
+```bash
+# Sim launch (terminal 1):
+ros2 launch pxrd_cell pxrd_full.launch.py tall_pedestal:=true \
+  pedestal_off_z:=0.55 pedestal_off_x:=0 pedestal_off_y:=-0.2 \
+  table_x:=-0.5 table_y:=-0.9 table_h:=0.5
+
+# Load — plate table -> PXRD (terminal 2):
+ros2 run pxrd_cell pick_place --source table_top --target pxrd_sample \
+  --planner RRTConnect --vel 0.1 --place-lift 0.005 --transit-time 20
+
+# Retrieve — plate PXRD -> table:
+ros2 run pxrd_cell pick_place --source pxrd_sample --target table_top \
+  --planner RRTConnect --vel 0.1 --place-lift 0.005 --transit-time 20
+```
+
+These exact values are baked into `./run_pxrd.sh`. Position meanings:
+- `pedestal_off_x:=0 pedestal_off_y:=-0.2 pedestal_off_z:=0.55` — pedestal
+  origin offset from the PXRD origin, CAD frame (Y = height: −0.2 puts the
+  945 mm pedestal's top plate 200 mm below the PXRD origin; Z = depth away
+  from the instrument). SolidWorks-measured baseline was
+  (0.12763, −0.6246 for the 585 pedestal, 0.41012).
+- `table_x:=-0.5 table_y:=-0.9 table_h:=0.5` — staging table in WORLD frame
+  (meters), table top at 0.5 m.
+- Tabbed-plate rest pose (baked constant `TABBED_PLATE_POSE`): xyz
+  (0.005, 0.0085, 0.0) rpy (180°, 90°, 0°) in the `pxrd_smartlab` frame —
+  dialed visually, wells land on the sample origin.
+- Resulting deck positions in `base_link` at this layout:
+  table_top ≈ (−0.387, +0.042, −0.510), pxrd_sample ≈ (+0.113, +0.942, +0.200).
+
 ## The scene
 
 - **Instrument**: Rigaku SmartLab PXRD. CAD origin = sample position
