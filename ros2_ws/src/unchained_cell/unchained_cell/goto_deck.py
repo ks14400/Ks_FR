@@ -2,8 +2,8 @@
 Plan + execute arm motion to position the gripper TCP above a named deck marker.
 
 Usage:
-  ros2 run fr_test_cell goto_deck deck_9_10_pos1
-  ros2 run fr_test_cell goto_deck deck_vortex_pos2 --hover 0.20
+  ros2 run unchained_cell goto_deck deck_9_10_pos1
+  ros2 run unchained_cell goto_deck deck_vortex_pos2 --hover 0.20
 
 The TF tree already contains every deck as a fixed link under unchained_junior
 (via unchained_full.urdf.xacro). This script looks up TF base_link -> <deck>,

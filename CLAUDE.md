@@ -1,140 +1,110 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code when working in this repository.
 
 ---
 
-## Project Summary
+## What this repo is
 
-Automated pick-and-place system using **Fairino FR16/FR20** cobots to load samples
-into a **PXRD** (powder X-ray diffraction) instrument. The goal is a **ROS2-based
-simulation workflow** where pick-and-place paths are planned with collision avoidance
-using real CAD models, tested entirely in simulation, then deployed to the physical
-robot by changing one IP address.
+Two ROS2/MoveIt2 robot cells that load 96-well plates into lab instruments
+with Fairino cobots, plus the shared plumbing to run the SAME code in
+simulation and on real hardware (switch = launch args, not code):
 
-**This repo** (`Ks_Fairino`) is a local clone of the **fairino-python-sdk**, matched
-to controller firmware **v3.8.6**. It is one component of the larger system.
+| Cell | Robot | Instrument | Status |
+|---|---|---|---|
+| **unchained** (`unchained_cell`) | FR16 + DH AG-145 gripper | Unchained Junior (open decks) | **Hardware-proven** — full pick-and-place incl. real gripper |
+| **pxrd** (`pxrd_cell`) | FR10 + DH AG-145 gripper | Rigaku SmartLab PXRD (enclosed bay) | **Sim-validated round trip** — hardware bring-up pending |
 
-## Current State
+Everything lives in one colcon workspace: `ros2_ws/`.
 
-- SDK (`linux/fairino/Robot.py`) and pre-compiled bindings (`linux/libfairino/`) are present
-- ~97 example scripts in `linux/example/`
-- Robot is accessible via WebApp at its IP address
-- The ROS2 workspace, simulation environment, and application code have **not been built yet**
+## Quick start
 
----
+```bash
+# PXRD cell (domain 43):
+./run_pxrd.sh sim          # terminal 1 — sim + rviz
+./run_pxrd.sh load         # terminal 2 — plate: table -> PXRD
+./run_pxrd.sh retrieve     #              plate: PXRD -> table
+./run_pxrd.sh recover      # stranded-arm rescue (after aborts)
 
-## What We're Building
-
-```
-CAD files (PXRD instrument, fixtures, robot cell)
-    ↓ convert STEP → DAE meshes
-URDF scene (robot + instrument + fixtures)
-    ↓
-MoveIt2 (collision-free path planning in simulation)
-    ↓
-Gazebo (3D visualization and physics validation)
-    ↓
-When validated → connect to real robot (same code, different IP)
+# Unchained cell (domain 42):
+./run_unchained.sh sim                              # sim + rviz
+./run_unchained.sh pick deck_9_10_pos1 table_top    # pick-and-place
+# hardware: see docs/unchained-cell.md (bridge + hw-scene + --hardware)
 ```
 
-We are **not** scripting motions via the Python SDK or WebApp directly. All motion
-planning goes through ROS2/MoveIt2 with collision avoidance against real CAD geometry.
+The two cells run on isolated ROS domains (42/43) — both sims can run
+side by side with zero interference. The runner scripts set the domain;
+for manual terminals use `source ros2_ws/env_pxrd.sh` / `env_unchained.sh`
+(or the `pxrd` / `unchained` bash functions).
 
----
-
-## Phase Guide
-
-Development is organized into five sequential phases. **Read the relevant phase doc
-before working on that phase.**
-
-| Phase | Focus | Doc |
-|---|---|---|
-| **1** | ROS2 + MoveIt2 + Gazebo installation | [phase1-ros2-install.md](docs/phases/phase1-ros2-install.md) |
-| **2** | Fairino URDF in Gazebo + MoveIt2 planning | [phase2-robot-sim.md](docs/phases/phase2-robot-sim.md) |
-| **3** | PXRD cell scene with collision meshes | [phase3-pxrd-cell.md](docs/phases/phase3-pxrd-cell.md) |
-| **4** | Pick-and-place application code | [phase4-application.md](docs/phases/phase4-application.md) |
-| **5** | Hardware commissioning (real robot) | [phase5-hardware.md](docs/phases/phase5-hardware.md) |
-
----
-
-## Key Repos (We Don't Edit These)
-
-| Repo | What it gives us |
-|---|---|
-| `FAIR-INNOVATION/frcobot_ros2` | FR16/FR20 URDF + meshes, MoveIt2 configs, `fairino_hardware` C++ plugin, `fairino_msgs` |
-| `Devonics-Inc/ros2_fr_gazebo` | Gazebo Fortress simulation, mirror mode, digital twin mode |
-| `FAIR-INNOVATION/fairino-python-sdk` | Python SDK (this repo) — used for direct connection verification only |
-
-**Our package** (`pxrd_cell`) is the only code we write — it adds the PXRD instrument
-to the scene, configures collision meshes, and runs the pick-and-place job.
-
----
-
-## Core Architecture
+## Repo map
 
 ```
-Job YAML → job_runner.py (Python) → MoveIt 2 action client
-  → MoveIt 2 planner (with PXRD collision mesh) → ros2_control
-  → fairino_hardware (C++ plugin — never edit) → TCP/IP :8080
-  → SimMachine / real controller → Robot arm + gripper
+run_pxrd.sh / run_unchained.sh   ← START HERE: one-command launchers
+ros2_ws/
+  src/pxrd_cell/       PXRD cell (Python + config; we own this)
+  src/unchained_cell/  Unchained cell (Python + config; we own this)
+  src/fr_bridge/       Cell-agnostic hardware bridge (sim topics -> Fairino SDK)
+  src/ros2_fr_gazebo/  Vendored upstream (fairino descriptions/moveit cfgs) — DO NOT EDIT
+  clean_sim.sh         Kill all cell ROS nodes (run before every launch)
+  env_pxrd.sh / env_unchained.sh   Domain isolation
+cad/                   Source CAD (originals; runtime meshes live in each pkg)
+docs/
+  pxrd-cell.md         PXRD cell: architecture, validated params, debugging
+  unchained-cell.md    Unchained cell: hardware-proven params + procedures
+  phases/              Historical phase docs (original build plan)
+linux/                 Fairino Python SDK (v3.8.6) — reference/bridge dependency
+scripts/               One-off conversion/test scripts (mostly historical)
 ```
 
----
+## Architecture (both cells)
 
-## Non-Negotiable Rules
+```
+pick_place.py (phase orchestrator, budget gates, telemetry)
+  -> MoveIt2 (move_group): OMPL joint goals + collision-checked Cartesian
+  -> ros2_control:  mock controllers (sim)  |  fr_bridge sdk_executor (hardware)
+  -> real robot: Fairino SDK over TCP (bridge bypasses the buggy C++ plugin)
+```
 
-1. **Never edit** `fairino_hardware/`, `fairino_description/`, or upstream repos
-2. **Never hardcode** robot IP, waypoints, or speeds — use config/YAML/env vars
-3. **Always load** the PXRD collision mesh before any motion plan
-4. **Always validate** in Gazebo simulation before connecting to real robot
-5. **Speed limit** near PXRD instrument: ≤ 50 mm/s
-6. **Firmware matching**: SDK, `frcobot_ros2`, and `ros2_fr_gazebo` must match v3.8.6
-7. **YAML discipline**: never modify a YAML that has run on hardware — duplicate it
-8. **Only Python and config files** are authored. C++ hardware interface is pre-built.
+- The **plate** is a MoveIt CollisionObject managed by pick_place (attach to
+  deck ↔ gripper with touch_links); in the PXRD cell it is the real tabbed
+  mesh, rigid-TF attached.
+- **Budget gates** reject crazy plans before execution (max joint travel /
+  per-joint / per-step).
+- **Hardware = same script + `--hardware`** with the bridge running; real
+  arm speed is the bridge's `movej_vel_pct`, not `--vel` (planning-only).
 
----
+## Non-negotiable rules
 
-## Hardware Quick Facts
+1. **Never edit** `ros2_ws/src/ros2_fr_gazebo/` or other vendored upstream code
+2. **Never hardcode** robot IP / waypoints / speeds in code — launch args & flags
+3. **Always validate in sim before hardware** — same command minus `--hardware`
+4. **Never weaken collision checking to make a motion pass** — masked
+   SRDF/touch_links entries hid real fingertip-vs-instrument collisions once;
+   fix geometry or motion, not the checker
+5. **Speed near instruments** ≤ 50 mm/s on hardware (bridge `movej_vel_pct` low)
+6. **Firmware matching**: SDK & vendored pkgs match controller v3.8.6
+7. **Never modify a YAML/param set that has run on hardware — duplicate it**
+8. We author **Python + config only**; C++ interfaces stay vendored
 
-| | FR16 | FR20 |
-|---|---|---|
-| Payload | 16 kg | 20 kg |
-| Reach | 1034 mm | 1854 mm |
-| Max TCP speed | **1 m/s** | **2 m/s** |
-| Repeatability | ±0.03 mm | ±0.03 mm |
+## Debugging playbook (earned the hard way)
 
-- SDK ports: 20003 (XML-RPC commands), 20004 (state feedback ~10 Hz)
-- ros2_control ports: 8080 (commands), 8083 (status ~10 Hz)
-- Default IP: `192.168.58.2`
-- Gripper: head I/O DO[0]=open, DO[1]=close
-- Firmware: v3.8.6 (no EtherCAT — use Modbus or TCP/IP)
+- Pose mysteriously unplannable? `ros2 run pxrd_cell probe_pose --x .. --y .. --z ..`
+  → prints reachability + EXACT colliding link pair. Never guess.
+- Cartesian fraction < 1.0: real collision vs solver artifact →
+  GetCartesianPath with avoid_collisions True vs False (see scratchpad cart_probe).
+- Path found but rejected: move_group's launch log prints
+  `Found a contact between X and Y` — read it.
+- Joint angles from rviz: `ros2 topic echo /joint_states --once` and pair
+  name[] with position[] (order is scrambled; a mis-paired j4 sign cost a day).
+- Stale sim weirdness (`-4` errors, zombie nodes): `ros2_ws/clean_sim.sh`,
+  and check `ps -o stat` for `Tl`/`Z` (a Ctrl-Z'd launch looks alive to pgrep).
+- IK branch nondeterminism: same TCP pose has mirror wrist families with
+  totally different collision behavior — pin branches (STAGE_HINTS pattern).
 
----
+## Cell-specific docs — READ BEFORE WORKING ON A CELL
 
-## Official Manual Reference (docs/fr.pdf)
-
-The full Fairino manual (v3.9.3, 2707 pages) is at `docs/fr.pdf`. Key chapters:
-
-| Chapter | Content | Relevant Phase |
-|---|---|---|
-| Ch 2 | SDK Manual (C++, Python, C#, Lua) — full API reference | Phase 5 |
-| Ch 7 | frcobot_ros (ROS1 Noetic) — reference only | — |
-| Ch 8 | frcobot_ros2 (ROS2 Humble, fairino_hardware plugin) | Phase 1-2 |
-| Ch 9 | MoveIt2 (plugin setup, MTC pick-and-place demo) | Phase 2-3 |
-| Ch 16 | SimMachine (VMware & Docker) | Phase 5 |
-
----
-
-## Key References
-
-| Resource | URL |
-|---|---|
-| Official docs (latest) | https://fairino-doc-en.readthedocs.io/latest/ |
-| Python SDK releases | https://github.com/FAIR-INNOVATION/fairino-python-sdk/releases |
-| ROS2 package releases | https://github.com/FAIR-INNOVATION/frcobot_ros2/releases |
-| Devonics Gazebo repo | https://github.com/Devonics-Inc/ros2_fr_gazebo |
-| Devonics support | https://support.devonics.com |
-| SimMachine / downloads | https://fairino.support |
-| CAD models / 3D STEP | https://www.fairino.com/DOWNLOAD2 |
-| URDF files | https://inluxrobotics.eu/pages/tech-support |
+- **PXRD**: [docs/pxrd-cell.md](docs/pxrd-cell.md) — enclosed-bay geometry,
+  side-pinch grasp, insertion choreography, validated constants
+- **Unchained**: [docs/unchained-cell.md](docs/unchained-cell.md) —
+  hardware-proven parameters, bridge operation, gripper force control

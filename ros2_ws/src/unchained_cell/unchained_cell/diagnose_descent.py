@@ -6,7 +6,7 @@ spawning the plate exactly the same way. Reports every constraint violation
 and every contact pair — actual evidence, not guesses.
 
 Usage:
-  ros2 run fr_test_cell diagnose_descent --deck deck_9_10_pos1
+  ros2 run unchained_cell diagnose_descent --deck deck_9_10_pos1
 """
 import argparse
 import sys

@@ -2,7 +2,7 @@ import os
 from glob import glob
 from setuptools import find_packages, setup
 
-package_name = 'fr_test_cell'
+package_name = 'unchained_cell'
 
 setup(
     name=package_name,
@@ -35,13 +35,13 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'goto_deck = fr_test_cell.goto_deck:main',
-            'pick_place = fr_test_cell.pick_place:main',
-            'diagnose_descent = fr_test_cell.diagnose_descent:main',
-            'check_state = fr_test_cell.check_state:main',
-            'go_home = fr_test_cell.go_home:main',
-            'stop = fr_test_cell.stop:main',
-            'purge_scene = fr_test_cell.purge_scene:main',
+            'goto_deck = unchained_cell.goto_deck:main',
+            'pick_place = unchained_cell.pick_place:main',
+            'diagnose_descent = unchained_cell.diagnose_descent:main',
+            'check_state = unchained_cell.check_state:main',
+            'go_home = unchained_cell.go_home:main',
+            'stop = unchained_cell.stop:main',
+            'purge_scene = unchained_cell.purge_scene:main',
         ],
     },
 )

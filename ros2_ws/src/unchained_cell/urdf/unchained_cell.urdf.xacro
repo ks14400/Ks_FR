@@ -11,8 +11,8 @@
   To add a test object, uncomment or copy the example block at the bottom.
 
   Usage:
-    xacro fr_test_cell.urdf.xacro robot_model:=fr16 control_mode:=gazebo
-    xacro fr_test_cell.urdf.xacro robot_model:=fr10 control_mode:=mock
+    xacro unchained_cell.urdf.xacro robot_model:=fr16 control_mode:=gazebo
+    xacro unchained_cell.urdf.xacro robot_model:=fr10 control_mode:=mock
 -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="fairino_v6_robot">
 
@@ -44,7 +44,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="package://fr_test_cell/meshes/pedestal_585mm.stl"
+        <mesh filename="package://unchained_cell/meshes/pedestal_585mm.stl"
               scale="0.001 0.001 0.001"/>
       </geometry>
       <material name="aluminum">
@@ -54,7 +54,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="package://fr_test_cell/meshes/pedestal_585mm.stl"
+        <mesh filename="package://unchained_cell/meshes/pedestal_585mm.stl"
               scale="0.001 0.001 0.001"/>
       </geometry>
     </collision>
@@ -133,7 +133,7 @@
       <visual>
         <origin xyz="0 0 0" rpy="0 0 0"/>
         <geometry>
-          <mesh filename="package://fr_test_cell/meshes/unchained_junior_visual.stl"
+          <mesh filename="package://unchained_cell/meshes/unchained_junior_visual.stl"
                 scale="0.001 0.001 0.001"/>
         </geometry>
         <material name="device_grey"><color rgba="0.6 0.6 0.65 1.0"/></material>
@@ -141,7 +141,7 @@
       <collision>
         <origin xyz="0 0 0" rpy="0 0 0"/>
         <geometry>
-          <mesh filename="package://fr_test_cell/meshes/unchained_junior_collision.stl"
+          <mesh filename="package://unchained_cell/meshes/unchained_junior_collision.stl"
                 scale="0.001 0.001 0.001"/>
         </geometry>
       </collision>

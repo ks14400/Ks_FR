@@ -10,7 +10,7 @@ DANGER: Executing a motion in rviz2 moves the REAL ROBOT.
         Always validate in simulation first and keep the e-stop in hand.
 
 Usage:
-    ros2 launch fr_test_cell fr_test_hardware.launch.py robot_model:=fr16
+    ros2 launch unchained_cell fr_test_hardware.launch.py robot_model:=fr16
 """
 import os
 from ament_index_python.packages import get_package_share_directory
@@ -39,7 +39,7 @@ def launch_setup(context, *args, **kwargs):
     robot_name = rc["robot_name"]
     controller_name = f"fairino{robot_num}_controller"
 
-    test_cell_share = get_package_share_directory("fr_test_cell")
+    test_cell_share = get_package_share_directory("unchained_cell")
     moveit_share = get_package_share_directory(moveit_pkg)
 
     # Pedestal pose (for collision avoidance — robot must not hit the pedestal)
@@ -53,7 +53,7 @@ def launch_setup(context, *args, **kwargs):
     # ══════════════════════════════════════════════════════════
     # URDF: Combined scene with hardware control plugin
     # ══════════════════════════════════════════════════════════
-    test_urdf = os.path.join(test_cell_share, "urdf", "fr_test_cell.urdf.xacro")
+    test_urdf = os.path.join(test_cell_share, "urdf", "unchained_cell.urdf.xacro")
 
     moveit_config = (
         MoveItConfigsBuilder(robot_name, package_name=moveit_pkg)

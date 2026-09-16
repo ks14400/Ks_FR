@@ -5,7 +5,7 @@
   with mesh paths repointed to our package and transmissions stripped.
 
   Usage:
-    <xacro:include filename="$(find fr_test_cell)/urdf/dh_ag145_macro.xacro"/>
+    <xacro:include filename="$(find unchained_cell)/urdf/dh_ag145_macro.xacro"/>
     <xacro:dh_ag145_gripper parent="wrist3_link" prefix="">
       <origin xyz="0 0 0" rpy="0 0 0"/>
     </xacro:dh_ag145_gripper>
@@ -31,12 +31,12 @@
     <link name="${prefix}gripper_base_link">
       <visual>
         <geometry>
-          <mesh filename="package://fr_test_cell/meshes/dh_ag145/base_link.STL"/>
+          <mesh filename="package://unchained_cell/meshes/dh_ag145/base_link.STL"/>
         </geometry>
       </visual>
       <collision>
         <geometry>
-          <mesh filename="package://fr_test_cell/meshes/dh_ag145/base_link.STL"/>
+          <mesh filename="package://unchained_cell/meshes/dh_ag145/base_link.STL"/>
         </geometry>
       </collision>
       <inertial>
@@ -66,10 +66,10 @@
 
     <link name="${prefix}gripper_finger1_knuckle_link">
       <visual>
-        <geometry><mesh filename="package://fr_test_cell/meshes/dh_ag145/crank_Link.STL"/></geometry>
+        <geometry><mesh filename="package://unchained_cell/meshes/dh_ag145/crank_Link.STL"/></geometry>
       </visual>
       <collision>
-        <geometry><mesh filename="package://fr_test_cell/meshes/dh_ag145/crank_Link.STL"/></geometry>
+        <geometry><mesh filename="package://unchained_cell/meshes/dh_ag145/crank_Link.STL"/></geometry>
       </collision>
       <inertial>
         <mass value="0.0039541"/>
@@ -81,10 +81,10 @@
 
     <link name="${prefix}gripper_finger2_knuckle_link">
       <visual>
-        <geometry><mesh filename="package://fr_test_cell/meshes/dh_ag145/crank_Link.STL"/></geometry>
+        <geometry><mesh filename="package://unchained_cell/meshes/dh_ag145/crank_Link.STL"/></geometry>
       </visual>
       <collision>
-        <geometry><mesh filename="package://fr_test_cell/meshes/dh_ag145/crank_Link.STL"/></geometry>
+        <geometry><mesh filename="package://unchained_cell/meshes/dh_ag145/crank_Link.STL"/></geometry>
       </collision>
       <inertial>
         <mass value="0.0039541"/>
@@ -114,10 +114,10 @@
 
     <link name="${prefix}gripper_finger1_finger_link">
       <visual>
-        <geometry><mesh filename="package://fr_test_cell/meshes/dh_ag145/rod_Link.STL"/></geometry>
+        <geometry><mesh filename="package://unchained_cell/meshes/dh_ag145/rod_Link.STL"/></geometry>
       </visual>
       <collision>
-        <geometry><mesh filename="package://fr_test_cell/meshes/dh_ag145/rod_Link.STL"/></geometry>
+        <geometry><mesh filename="package://unchained_cell/meshes/dh_ag145/rod_Link.STL"/></geometry>
       </collision>
       <inertial>
         <mass value="0.01141"/>
@@ -129,10 +129,10 @@
 
     <link name="${prefix}gripper_finger2_finger_link">
       <visual>
-        <geometry><mesh filename="package://fr_test_cell/meshes/dh_ag145/rod_Link.STL"/></geometry>
+        <geometry><mesh filename="package://unchained_cell/meshes/dh_ag145/rod_Link.STL"/></geometry>
       </visual>
       <collision>
-        <geometry><mesh filename="package://fr_test_cell/meshes/dh_ag145/rod_Link.STL"/></geometry>
+        <geometry><mesh filename="package://unchained_cell/meshes/dh_ag145/rod_Link.STL"/></geometry>
       </collision>
       <inertial>
         <mass value="0.01141"/>
@@ -162,10 +162,10 @@
 
     <link name="${prefix}gripper_finger1_inner_knuckle_link">
       <visual>
-        <geometry><mesh filename="package://fr_test_cell/meshes/dh_ag145/proximal_phalanx_Link.STL"/></geometry>
+        <geometry><mesh filename="package://unchained_cell/meshes/dh_ag145/proximal_phalanx_Link.STL"/></geometry>
       </visual>
       <collision>
-        <geometry><mesh filename="package://fr_test_cell/meshes/dh_ag145/proximal_phalanx_Link.STL"/></geometry>
+        <geometry><mesh filename="package://unchained_cell/meshes/dh_ag145/proximal_phalanx_Link.STL"/></geometry>
       </collision>
       <inertial>
         <mass value="0.017156"/>
@@ -177,10 +177,10 @@
 
     <link name="${prefix}gripper_finger2_inner_knuckle_link">
       <visual>
-        <geometry><mesh filename="package://fr_test_cell/meshes/dh_ag145/proximal_phalanx_Link.STL"/></geometry>
+        <geometry><mesh filename="package://unchained_cell/meshes/dh_ag145/proximal_phalanx_Link.STL"/></geometry>
       </visual>
       <collision>
-        <geometry><mesh filename="package://fr_test_cell/meshes/dh_ag145/proximal_phalanx_Link.STL"/></geometry>
+        <geometry><mesh filename="package://unchained_cell/meshes/dh_ag145/proximal_phalanx_Link.STL"/></geometry>
       </collision>
       <inertial>
         <mass value="0.017156"/>
@@ -210,10 +210,10 @@
 
     <link name="${prefix}gripper_finger1_finger_tip_link">
       <visual>
-        <geometry><mesh filename="package://fr_test_cell/meshes/dh_ag145/distal_phalanx_Link.STL"/></geometry>
+        <geometry><mesh filename="package://unchained_cell/meshes/dh_ag145/distal_phalanx_Link.STL"/></geometry>
       </visual>
       <collision>
-        <geometry><mesh filename="package://fr_test_cell/meshes/dh_ag145/distal_phalanx_Link.STL"/></geometry>
+        <geometry><mesh filename="package://unchained_cell/meshes/dh_ag145/distal_phalanx_Link.STL"/></geometry>
       </collision>
       <inertial>
         <mass value="0.012397"/>
@@ -225,10 +225,10 @@
 
     <link name="${prefix}gripper_finger2_finger_tip_link">
       <visual>
-        <geometry><mesh filename="package://fr_test_cell/meshes/dh_ag145/distal_phalanx_Link.STL"/></geometry>
+        <geometry><mesh filename="package://unchained_cell/meshes/dh_ag145/distal_phalanx_Link.STL"/></geometry>
       </visual>
       <collision>
-        <geometry><mesh filename="package://fr_test_cell/meshes/dh_ag145/distal_phalanx_Link.STL"/></geometry>
+        <geometry><mesh filename="package://unchained_cell/meshes/dh_ag145/distal_phalanx_Link.STL"/></geometry>
       </collision>
       <inertial>
         <mass value="0.012397"/>

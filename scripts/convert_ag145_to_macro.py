@@ -6,7 +6,7 @@ Steps:
   1. Read the upstream AG-145 URDF
   2. Strip the world link and world_fixed joint
   3. Add prefix to all link and joint names
-  4. Update mesh paths to use package://fr_test_cell/meshes/dh_ag145/
+  4. Update mesh paths to use package://unchained_cell/meshes/dh_ag145/
   5. Wrap in <xacro:macro name="dh_ag145_gripper" params="prefix parent *origin grasp_link_offset:=0.143">
   6. Add the parent joint using ${parent} and the *origin block
   7. Add a grasp_link (TCP) at the user-specified offset
@@ -19,7 +19,7 @@ UPSTREAM_URDF = (
     "dh_gripper_ros-f59f9c2f4bc8eb116448b1d798791424bf64e337/"
     "dh_robotics_ag145_gripper/dh_robotics_ag145_description/urdf/dh_robotics_ag145.urdf"
 )
-OUTPUT = "/home/aimatx_nuc3/ros2_ws/src/fr_test_cell/urdf/dh_ag145_macro.xacro"
+OUTPUT = "/home/aimatx_nuc3/ros2_ws/src/unchained_cell/urdf/dh_ag145_macro.xacro"
 
 
 def main():
@@ -37,7 +37,7 @@ def main():
     # Update mesh paths
     content = content.replace(
         'package://dh_robotics_ag145_description/meshes/visual/',
-        'package://fr_test_cell/meshes/dh_ag145/',
+        'package://unchained_cell/meshes/dh_ag145/',
     )
 
     # Add prefix to all link and joint names (matching name attribute)
@@ -92,7 +92,7 @@ def main():
   Adapted from upstream dh_gripper_ros AG-145 URDF.
 
   Usage:
-    <xacro:include filename="$(find fr_test_cell)/urdf/dh_ag145_macro.xacro"/>
+    <xacro:include filename="$(find unchained_cell)/urdf/dh_ag145_macro.xacro"/>
     <xacro:dh_ag145_gripper parent="wrist3_link" prefix="gripper_">
       <origin xyz="0 0 0" rpy="0 0 0"/>
     </xacro:dh_ag145_gripper>

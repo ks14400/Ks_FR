@@ -17,14 +17,14 @@ FollowJointTrajectory goal can move the real robot. Keep e-stop in hand.
 
 Usage:
     # Terminal 1 — bridge to real robot (slow defaults for first tests)
-    ros2 launch fr_test_cell bridge.launch.py robot_ip:=192.168.58.2
+    ros2 launch unchained_cell bridge.launch.py robot_ip:=192.168.58.2
 
     # Terminal 2 — your scene/orchestration
-    ros2 launch fr_test_cell unchained_full.launch.py control_mode:=hardware \\
+    ros2 launch unchained_cell unchained_full.launch.py control_mode:=hardware \\
         table_x:=-0.2 table_y:=-1.2 table_h:=0.9
 
     # Terminal 3 — pick_place exactly like in sim
-    ros2 run fr_test_cell pick_place --source deck_9_10_pos1 --target table_top \\
+    ros2 run unchained_cell pick_place --source deck_9_10_pos1 --target table_top \\
         --vel 0.05
 """
 from launch import LaunchDescription

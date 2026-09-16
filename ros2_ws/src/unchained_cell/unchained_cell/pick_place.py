@@ -5,8 +5,8 @@ The plate is managed as a MoveIt CollisionObject so it actually moves with the
 gripper. URDF static plate must be OFF (include_plate:=false, which is now default).
 
 Usage:
-  ros2 run fr_test_cell pick_place --source deck_9_10_pos1 --target deck_9_10_pos2
-  ros2 run fr_test_cell pick_place --source deck_9_10_pos1 --target deck_vortex_pos2 --hover 0.18
+  ros2 run unchained_cell pick_place --source deck_9_10_pos1 --target deck_9_10_pos2
+  ros2 run unchained_cell pick_place --source deck_9_10_pos1 --target deck_vortex_pos2 --hover 0.18
 
 Sequence:
   1. Spawn plate at --source (if not already present)
@@ -62,7 +62,7 @@ GRIPPER_CLOSED_JOINT = -0.65  # URDF lower limit = jaws fully closed
 
 # AG-145 jaw opening at fully-open (100%), in mm. This is the calibration that
 # converts a desired jaw width (mm) to the gripper_finger1_joint value.
-# NOMINAL value — verify with:  ros2 run fr_test_cell go_home --hardware --gripper-mm 70
+# NOMINAL value — verify with:  ros2 run unchained_cell go_home --hardware --gripper-mm 70
 # then measure the physical gap; if it differs, set this to (measured_gap /
 # fraction_commanded) so the mm command matches reality.
 GRIPPER_STROKE_MM = 145.0

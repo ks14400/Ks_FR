@@ -58,7 +58,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="package://fr_test_cell/meshes/unchained_junior_visual.stl"
+        <mesh filename="package://unchained_cell/meshes/unchained_junior_visual.stl"
               scale="0.001 0.001 0.001"/>
       </geometry>
       <material name="grey"><color rgba="0.6 0.6 0.65 1.0"/></material>
@@ -66,7 +66,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="package://fr_test_cell/meshes/unchained_junior_collision.stl"
+        <mesh filename="package://unchained_cell/meshes/unchained_junior_collision.stl"
               scale="0.001 0.001 0.001"/>
       </geometry>
     </collision>
@@ -258,7 +258,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="package://fr_test_cell/meshes/vention_pedestal_visual.stl"
+        <mesh filename="package://unchained_cell/meshes/vention_pedestal_visual.stl"
               scale="0.001 0.001 0.001"/>
       </geometry>
       <material name="aluminum"><color rgba="0.75 0.75 0.80 1.0"/></material>
@@ -266,7 +266,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="package://fr_test_cell/meshes/vention_pedestal_collision.stl"
+        <mesh filename="package://unchained_cell/meshes/vention_pedestal_collision.stl"
               scale="0.001 0.001 0.001"/>
       </geometry>
     </collision>
@@ -288,7 +288,7 @@
     So we need a roll = -π/2 rotation to convert pedestal Y-up → robot Z-up.
     Plus an optional yaw to match real-world mounting orientation.
   -->
-  <xacro:include filename="$(find fr_test_cell)/urdf/fairino_armonly/fairino${robot_num}_v6_armonly.urdf"/>
+  <xacro:include filename="$(find unchained_cell)/urdf/fairino_armonly/fairino${robot_num}_v6_armonly.urdf"/>
 
   <joint name="robot_mount_joint" type="fixed">
     <parent link="pedestal"/>
@@ -358,7 +358,7 @@
 
   <!-- ============ AG-145 Gripper attached to wrist3_link ============ -->
   <xacro:if value="${'$(arg include_gripper)' == 'true'}">
-    <xacro:include filename="$(find fr_test_cell)/urdf/dh_ag145_macro.xacro"/>
+    <xacro:include filename="$(find unchained_cell)/urdf/dh_ag145_macro.xacro"/>
     <xacro:dh_ag145_gripper parent="wrist3_link" prefix="">
       <origin xyz="$(arg gripper_mount_x) $(arg gripper_mount_y) $(arg gripper_mount_z)"
               rpy="$(arg gripper_mount_roll) $(arg gripper_mount_pitch) $(arg gripper_mount_yaw)"/>

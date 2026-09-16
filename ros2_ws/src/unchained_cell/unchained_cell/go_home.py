@@ -11,9 +11,9 @@ by pick_place's initial "go to home" phase. Layer-1 budget gate applies so a
 "crazy" plan can never be executed.
 
 Usage:
-  ros2 run fr_test_cell go_home                 # default --vel 0.10
-  ros2 run fr_test_cell go_home --vel 0.05      # slower
-  ros2 run fr_test_cell go_home --hardware      # hardware-safe default vel
+  ros2 run unchained_cell go_home                 # default --vel 0.10
+  ros2 run unchained_cell go_home --vel 0.05      # slower
+  ros2 run unchained_cell go_home --hardware      # hardware-safe default vel
 """
 import argparse
 import sys
@@ -29,7 +29,7 @@ from rclpy.node import Node
 from action_msgs.srv import CancelGoal
 from moveit_msgs.action import MoveGroup
 
-from fr_test_cell.pick_place import (
+from unchained_cell.pick_place import (
     HOME_JOINTS,
     GRIPPER_OPEN,
     GRIPPER_STROKE_MM,

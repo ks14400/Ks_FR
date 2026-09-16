@@ -9,7 +9,7 @@ This script clears all of them so the next run starts from a clean scene
 without restarting the launch.
 
 Usage:
-  ros2 run fr_test_cell purge_scene
+  ros2 run unchained_cell purge_scene
 """
 import sys
 import threading

@@ -3,7 +3,7 @@ Show the Unchained Junior in Gazebo + rviz2.
 STL placed AS-IS — SolidWorks frame = world frame.
 
 Usage:
-    ros2 launch fr_test_cell unchained_only.launch.py
+    ros2 launch unchained_cell unchained_only.launch.py
 """
 import os
 from ament_index_python.packages import get_package_share_directory
@@ -19,7 +19,7 @@ import xacro
 
 
 def launch_setup(context, *args, **kwargs):
-    test_cell_share = get_package_share_directory("fr_test_cell")
+    test_cell_share = get_package_share_directory("unchained_cell")
 
     # Read launch args
     dx = LaunchConfiguration("deck_offset_x").perform(context)

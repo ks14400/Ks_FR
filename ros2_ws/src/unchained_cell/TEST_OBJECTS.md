@@ -1,7 +1,7 @@
 # Adding Test Objects to the Test Cell
 
 To test collision avoidance or pick-and-place with custom objects, add links
-and joints to `urdf/fr_test_cell.urdf.xacro` before the closing `</robot>` tag.
+and joints to `urdf/unchained_cell.urdf.xacro` before the closing `</robot>` tag.
 
 ## Example: Red Box
 
@@ -70,14 +70,14 @@ and joints to `urdf/fr_test_cell.urdf.xacro` before the closing `</robot>` tag.
   <visual>
     <origin xyz="0 0 0" rpy="0 0 0"/>
     <geometry>
-      <mesh filename="package://fr_test_cell/meshes/my_object.stl"
+      <mesh filename="package://unchained_cell/meshes/my_object.stl"
             scale="0.001 0.001 0.001"/>
     </geometry>
   </visual>
   <collision>
     <origin xyz="0 0 0" rpy="0 0 0"/>
     <geometry>
-      <mesh filename="package://fr_test_cell/meshes/my_object.stl"
+      <mesh filename="package://unchained_cell/meshes/my_object.stl"
             scale="0.001 0.001 0.001"/>
     </geometry>
   </collision>
@@ -94,7 +94,7 @@ and joints to `urdf/fr_test_cell.urdf.xacro` before the closing `</robot>` tag.
 </joint>
 ```
 
-For meshes, place STL files in `fr_test_cell/meshes/` and update `setup.py`
+For meshes, place STL files in `unchained_cell/meshes/` and update `setup.py`
 to install them:
 ```python
 (os.path.join('share', package_name, 'meshes'), glob('meshes/*.stl')),
@@ -104,9 +104,9 @@ to install them:
 
 ```bash
 cd ~/ros2_ws
-colcon build --packages-select fr_test_cell
+colcon build --packages-select unchained_cell
 source install/setup.bash
-ros2 launch fr_test_cell fr_test_gazebo_moveit.launch.py
+ros2 launch unchained_cell fr_test_gazebo_moveit.launch.py
 ```
 
 MoveIt2 will automatically include the new objects in collision checking.

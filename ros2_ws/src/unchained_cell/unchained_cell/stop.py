@@ -12,7 +12,7 @@ After stop you should run 'go_home' to recover to a known safe pose before
 issuing further motion commands.
 
 Usage:
-  ros2 run fr_test_cell stop
+  ros2 run unchained_cell stop
 """
 import sys
 import threading

@@ -9,8 +9,8 @@ control_mode:=gazebo for physics simulation
 control_mode:=hardware for real robot (uses SDK executor — see other launch)
 
 Usage:
-    ros2 launch fr_test_cell unchained_full.launch.py
-    ros2 launch fr_test_cell unchained_full.launch.py robot_mount_yaw_deg:=90
+    ros2 launch unchained_cell unchained_full.launch.py
+    ros2 launch unchained_cell unchained_full.launch.py robot_mount_yaw_deg:=90
 """
 import os
 import math
@@ -28,7 +28,7 @@ import xacro
 
 
 def launch_setup(context, *args, **kwargs):
-    test_cell_share = get_package_share_directory("fr_test_cell")
+    test_cell_share = get_package_share_directory("unchained_cell")
     fairino_desc_share = get_package_share_directory("fairino_description")
 
     robot_model = LaunchConfiguration("robot_model").perform(context)

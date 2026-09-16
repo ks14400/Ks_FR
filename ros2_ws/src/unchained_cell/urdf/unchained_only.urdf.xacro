@@ -27,7 +27,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="package://fr_test_cell/meshes/unchained_junior_visual.stl"
+        <mesh filename="package://unchained_cell/meshes/unchained_junior_visual.stl"
               scale="0.001 0.001 0.001"/>
       </geometry>
       <material name="grey">
@@ -37,7 +37,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="package://fr_test_cell/meshes/unchained_junior_collision.stl"
+        <mesh filename="package://unchained_cell/meshes/unchained_junior_collision.stl"
               scale="0.001 0.001 0.001"/>
       </geometry>
     </collision>
@@ -96,7 +96,7 @@
       <visual>
         <origin xyz="0 0 0" rpy="0 0 0"/>
         <geometry>
-          <mesh filename="package://fr_test_cell/meshes/vention_pedestal_visual.stl"
+          <mesh filename="package://unchained_cell/meshes/vention_pedestal_visual.stl"
                 scale="0.001 0.001 0.001"/>
         </geometry>
         <material name="aluminum"><color rgba="0.75 0.75 0.80 1.0"/></material>
@@ -104,7 +104,7 @@
       <collision>
         <origin xyz="0 0 0" rpy="0 0 0"/>
         <geometry>
-          <mesh filename="package://fr_test_cell/meshes/vention_pedestal_collision.stl"
+          <mesh filename="package://unchained_cell/meshes/vention_pedestal_collision.stl"
                 scale="0.001 0.001 0.001"/>
         </geometry>
       </collision>

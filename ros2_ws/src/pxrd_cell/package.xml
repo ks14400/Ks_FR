@@ -6,7 +6,7 @@
   <description>
     PXRD (Rigaku SmartLab) robot cell: FR-series arm on a pedestal loading
     samples into the PXRD instrument. Built from the same template as
-    fr_test_cell (the unchained cell). Shares the cell-agnostic fr_bridge.
+    unchained_cell (the unchained cell). Shares the cell-agnostic fr_bridge.
   </description>
   <maintainer email="kshithij.kmn@gmail.com">ks14400</maintainer>
   <license>Apache-2.0</license>

@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>fr_test_cell</name>
+  <name>unchained_cell</name>
   <version>0.0.0</version>
   <description>Test cell: Fairino arm on a 585mm pedestal for testing waypoint workflow</description>
   <maintainer email="aimatx_nuc3@todo.todo">aimatx_nuc3</maintainer>

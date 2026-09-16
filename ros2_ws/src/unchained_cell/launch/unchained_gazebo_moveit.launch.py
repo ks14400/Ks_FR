@@ -5,9 +5,9 @@ Gazebo: Robot + pedestal as separate SDF models (same pattern as PXRD cell)
 MoveIt2: Combined URDF with pedestal as static collision object
 
 Usage:
-    ros2 launch fr_test_cell fr_test_gazebo_moveit.launch.py robot_model:=fr16
-    ros2 launch fr_test_cell fr_test_gazebo_moveit.launch.py robot_model:=fr10
-    ros2 launch fr_test_cell fr_test_gazebo_moveit.launch.py robot_model:=fr20
+    ros2 launch unchained_cell fr_test_gazebo_moveit.launch.py robot_model:=fr16
+    ros2 launch unchained_cell fr_test_gazebo_moveit.launch.py robot_model:=fr10
+    ros2 launch unchained_cell fr_test_gazebo_moveit.launch.py robot_model:=fr20
 """
 import os
 from ament_index_python.packages import get_package_share_directory
@@ -42,7 +42,7 @@ def launch_setup(context, *args, **kwargs):
     robot_name = rc["robot_name"]
     controller_name = f"fairino{robot_num}_controller"
 
-    test_cell_share = get_package_share_directory("fr_test_cell")
+    test_cell_share = get_package_share_directory("unchained_cell")
     fairino_desc_share = get_package_share_directory("fairino_description")
     moveit_share = get_package_share_directory(moveit_pkg)
 
@@ -258,7 +258,7 @@ def launch_setup(context, *args, **kwargs):
     # ══════════════════════════════════════════════════════════
     # MOVEIT2: Combined URDF (robot + pedestal collision object)
     # ══════════════════════════════════════════════════════════
-    test_urdf = os.path.join(test_cell_share, "urdf", "fr_test_cell.urdf.xacro")
+    test_urdf = os.path.join(test_cell_share, "urdf", "unchained_cell.urdf.xacro")
 
     # For MoveIt2 URDF: robot base_link is at world origin, so pedestal must be
     # 585mm BELOW (z=-0.585). Gazebo uses different coords (pedestal on ground,

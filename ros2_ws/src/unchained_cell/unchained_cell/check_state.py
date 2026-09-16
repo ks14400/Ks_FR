@@ -6,7 +6,7 @@ Use this whenever a plan fails fast (~< 1s) — it tells you definitively
 whether the current state is the blocker, no guessing.
 
 Usage:
-  ros2 run fr_test_cell check_state
+  ros2 run unchained_cell check_state
 """
 import sys
 import threading

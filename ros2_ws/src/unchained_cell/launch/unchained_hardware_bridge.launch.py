@@ -13,7 +13,7 @@ DANGER: Executing a motion in rviz2 moves the REAL ROBOT.
         Keep e-stop in hand. Start with small motions.
 
 Usage:
-    ros2 launch fr_test_cell fr_test_hardware_bridge.launch.py robot_model:=fr16
+    ros2 launch unchained_cell fr_test_hardware_bridge.launch.py robot_model:=fr16
 """
 import os
 from ament_index_python.packages import get_package_share_directory
@@ -44,7 +44,7 @@ def launch_setup(context, *args, **kwargs):
     robot_name = rc["robot_name"]
     controller_name = f"fairino{robot_num}_controller"
 
-    test_cell_share = get_package_share_directory("fr_test_cell")
+    test_cell_share = get_package_share_directory("unchained_cell")
     moveit_share = get_package_share_directory(moveit_pkg)
 
     ped_x     = float(LaunchConfiguration("pedestal_x").perform(context))
@@ -54,7 +54,7 @@ def launch_setup(context, *args, **kwargs):
     ped_pitch = float(LaunchConfiguration("pedestal_pitch").perform(context))
     ped_yaw   = float(LaunchConfiguration("pedestal_yaw").perform(context))
 
-    test_urdf = os.path.join(test_cell_share, "urdf", "fr_test_cell.urdf.xacro")
+    test_urdf = os.path.join(test_cell_share, "urdf", "unchained_cell.urdf.xacro")
 
     # Use 'mock' control mode — we don't actually use the mock controller,
     # we use our SDK executor. But mock mode avoids the C++ plugin entirely.

@@ -11,7 +11,7 @@ without the checksum/protocol issues in the C++ plugin.
 
 Cell-agnostic: the same bridge serves any cell (unchained, pxrd, ...). It
 knows nothing about decks/scenes — it only forwards joint trajectories and
-gripper commands to the robot. Launch it via fr_test_cell/launch/bridge.launch.py.
+gripper commands to the robot. Launch it via unchained_cell/launch/bridge.launch.py.
 
 Usage:
     ros2 run fr_bridge sdk_executor --ros-args \
