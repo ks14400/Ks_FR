@@ -111,7 +111,6 @@
   <disable_collisions link1="the_plate" link2="gripper_finger2_finger_tip_link" reason="Allowed for grasp"/>
 
   <!-- Plate sits flush on the deck — expected contact, not a real collision. -->
-  <disable_collisions link1="the_plate" link2="unchained_junior" reason="Adjacent"/>
 
   <!-- Arm links won't be physically near the plate in valid grasp configs,
        but MoveIt's IK sampler may probe configs that pass close — and a
@@ -125,19 +124,15 @@
   <disable_collisions link1="the_plate" link2="wrist3_link" reason="Never"/>
   <disable_collisions link1="the_plate" link2="pedestal" reason="Never"/>
 
-  <!-- ============== Gripper enters Unchained's deck slots ==============
+  <!-- NOTE (2026-09-23): the old "Slot clearance" gripper-vs-unchained_junior
+       disables were REMOVED. The new instrument scan is properly carved (deck
+       corridors verified open), so gripper-vs-instrument is now honestly
+       checked — including the new 9-10 rail obstruction.
+       Old header kept for history: Gripper enters Unchained's deck slots -->
+  <!-- ============== (removed) ==============
        The unchained STL is the outer hull (slots are not carved out), so the
        gripper appears to "collide" when it reaches into a deck. In reality the
        gripper fits inside the slot opening. Whitelist these pairs. -->
-  <disable_collisions link1="unchained_junior" link2="gripper_base_link" reason="Slot clearance"/>
-  <disable_collisions link1="unchained_junior" link2="gripper_finger1_knuckle_link" reason="Slot clearance"/>
-  <disable_collisions link1="unchained_junior" link2="gripper_finger2_knuckle_link" reason="Slot clearance"/>
-  <disable_collisions link1="unchained_junior" link2="gripper_finger1_inner_knuckle_link" reason="Slot clearance"/>
-  <disable_collisions link1="unchained_junior" link2="gripper_finger2_inner_knuckle_link" reason="Slot clearance"/>
-  <disable_collisions link1="unchained_junior" link2="gripper_finger1_finger_link" reason="Slot clearance"/>
-  <disable_collisions link1="unchained_junior" link2="gripper_finger2_finger_link" reason="Slot clearance"/>
-  <disable_collisions link1="unchained_junior" link2="gripper_finger1_finger_tip_link" reason="Slot clearance"/>
-  <disable_collisions link1="unchained_junior" link2="gripper_finger2_finger_tip_link" reason="Slot clearance"/>
 
   <!-- ============== Gripper picks/places on the lab table ==============
        Same idea as the unchained slot clearance — when the gripper descends
@@ -153,11 +148,9 @@
   <disable_collisions link1="table" link2="gripper_finger1_finger_tip_link" reason="Pick/place clearance"/>
   <disable_collisions link1="table" link2="gripper_finger2_finger_tip_link" reason="Pick/place clearance"/>
 
-  <!-- ============ Fixed obstacle near deck 1 ============
-       obstacle_deck1 is mounted on the Unchained, so it permanently touches
-       the machine's collision mesh — disable that static pair so it doesn't
-       read as an always-on self-collision. It stays ENABLED against the arm,
-       gripper, and plate (those must avoid it). -->
-  <disable_collisions link1="obstacle_deck1" link2="unchained_junior" reason="Mounted on machine"/>
+  <!-- ============ Fixed obstacle near deck 1 (REMOVED) ============
+       The synthetic obstacle_deck1 box is gone: the real obstruction is now
+       part of the instrument collision mesh (new scan), so no disable pair
+       is needed. -->
 
 </robot>

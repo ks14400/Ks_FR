@@ -84,7 +84,10 @@
   </joint>
 
   <!-- ================ Deck markers (CAD frame) ================ -->
-  <xacro:macro name="deck_marker" params="name x y z">
+  <!-- Generic Y-up marker. Default parent is the Unchained (CAD frame);
+       pass parent:=plate_stand for the stand pockets. Both parents carry a
+       Y-up frame, so rpy=0 keeps every marker Y-up. -->
+  <xacro:macro name="deck_marker" params="name x y z parent:=unchained_junior">
     <link name="${name}">
       <visual>
         <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -93,7 +96,7 @@
       </visual>
     </link>
     <joint name="${name}_joint" type="fixed">
-      <parent link="unchained_junior"/>
+      <parent link="${parent}"/>
       <child link="${name}"/>
       <origin xyz="${x} ${y} ${z}" rpy="0 0 0"/>
     </joint>
@@ -107,41 +110,14 @@
   <xacro:deck_marker name="deck_vortex_pos3"    x="0.19001"  y="0.26004" z="0.62009"/>
   <xacro:deck_marker name="deck_vacuum_filtration" x="0.31345" y="0.26956" z="0.69374"/>
 
-  <!-- ============ Fixed obstacle next to deck_9_10_pos1 ============
-       A physical cuboid present on the real machine beside deck 9-10 pos 1.
-       Offset + size were measured in SolidWorks (CAD frame) relative to the
-       deck 1 CENTER. The deck marker frame shares the CAD axis orientation
-       (deck markers are rpy=0 children of unchained_junior, which carries the
-       CAD Y-up frame), so SolidWorks X/Y/Z map in directly — no axis swap;
-       the CAD->world Z-up conversion is handled by unchained_junior_joint.
-       SolidWorks center offset from deck1: x=-90, y=11.63, z=22.88 mm
-       Measured SolidWorks dims (x,y,z): 28.4 x 65 x 120 mm.
-       Box PADDED over the measured size for clearance (keep it big so the arm
-       reliably avoids the real obstacle): X 28.4->40, Y 65->100, Z 120->160.
-       Centered on the measured artifact center. NOTE: at this size the box
-       intrudes into the corridor the arm uses for deck_vortex_pos1 — handled
-       by raising that approach, not by shrinking the box.
-       Box origin = link frame = artifact center (offset is to the center). -->
-  <link name="obstacle_deck1">
-    <visual>
-      <origin xyz="0 0 0" rpy="0 0 0"/>
-      <geometry><box size="0.040 0.100 0.160"/></geometry>
-      <material name="obstacle_deck1_color"><color rgba="0.85 0.1 0.1 0.55"/></material>
-    </visual>
-    <collision>
-      <origin xyz="0 0 0" rpy="0 0 0"/>
-      <geometry><box size="0.040 0.100 0.160"/></geometry>
-    </collision>
-  </link>
-  <joint name="obstacle_deck1_joint" type="fixed">
-    <parent link="deck_9_10_pos1"/>
-    <child link="obstacle_deck1"/>
-    <origin xyz="-0.090 0.01163 0.02288" rpy="0 0 0"/>
-  </joint>
+  <!-- ============ Fixed obstacle next to deck_9_10_pos1 (REMOVED) ============
+       The synthetic obstacle_deck1 box was deleted: the real obstruction is
+       now part of the instrument collision mesh (new scan of the Unchained). -->
 
   <!-- ================ Lab table (loading station) ================
-       A 30×30×70 cm box next to the pedestal. The plate gets staged here
-       on the way out of (or into) the Unchained device.
+       An AMR-like table box next to the pedestal (default 60×60×75 cm; the
+       position defaults are a starting point for manual tuning). The plate
+       gets staged here on the way out of (or into) the Unchained device.
 
        Table position is in WORLD frame (Z-up). The `table_top` frame is a
        child of `table` with rpy="1.5708 0 0" so its local +Y axis points
@@ -150,12 +126,24 @@
 
        Tunable via include_table arg (default true) and the table_*_xyz args. -->
   <xacro:arg name="include_table" default="true"/>
-  <xacro:arg name="table_x" default="0.7"/>
-  <xacro:arg name="table_y" default="-1.3"/>
+  <xacro:arg name="table_x" default="-0.3"/>
+  <xacro:arg name="table_y" default="-1.7"/>
   <xacro:arg name="table_z" default="0.0"/>
-  <xacro:arg name="table_w" default="0.30"/>     <!-- width  (X) -->
-  <xacro:arg name="table_d" default="0.30"/>     <!-- depth  (Y) -->
-  <xacro:arg name="table_h" default="0.70"/>     <!-- height (Z) -->
+  <xacro:arg name="table_w" default="0.6"/>      <!-- width  (X) -->
+  <xacro:arg name="table_d" default="0.6"/>      <!-- depth  (Y) -->
+  <xacro:arg name="table_h" default="0.75"/>     <!-- height (Z) -->
+
+  <!-- Plate stand placement on the table top (table_top frame is Y-up:
+       local +Y = world up, X/Z span the table surface). -->
+  <xacro:arg name="stand_x" default="0.0"/>
+  <xacro:arg name="stand_y_up" default="0.0"/>
+  <xacro:arg name="stand_z" default="0.0"/>
+  <xacro:arg name="stand_yaw_deg" default="0"/>
+  <!-- Static wp_sd.stl plates at the stand markers, for layout eyeballing. -->
+  <xacro:arg name="include_stand_plates" default="false"/>
+
+  <xacro:property name="stand_yaw_deg_prop" value="$(arg stand_yaw_deg)"/>
+  <xacro:property name="stand_yaw_rad" value="${float(stand_yaw_deg_prop) * pi / 180.0}"/>
 
   <xacro:if value="${'$(arg include_table)' == 'true'}">
     <xacro:property name="tw" value="$(arg table_w)"/>
@@ -198,6 +186,87 @@
            local +Y points along world +Z (up). -->
       <origin xyz="0 0 ${th}" rpy="1.5708 0 0"/>
     </joint>
+
+    <!-- ================ Plate stand on the table ================
+         Mesh native frame: origin at bottom center, Y-up, bbox 300×15.5×300 mm
+         — so at zero offsets it sits centered on the table top.
+         Parent table_top is Y-up (local +Y = world up), so:
+           - stand_y_up raises the stand off the table surface
+           - the yaw about the VERTICAL axis goes in the PITCH slot of rpy
+             (pitch = rotation about parent Y = true vertical here). -->
+    <link name="plate_stand">
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="package://unchained_cell/meshes/plate_stand.stl"
+                scale="0.001 0.001 0.001"/>
+        </geometry>
+        <material name="stand_grey"><color rgba="0.45 0.45 0.5 1.0"/></material>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="package://unchained_cell/meshes/plate_stand.stl"
+                scale="0.001 0.001 0.001"/>
+        </geometry>
+      </collision>
+      <inertial>
+        <mass value="2.0"/>
+        <inertia ixx="0.02" ixy="0" ixz="0" iyy="0.02" iyz="0" izz="0.02"/>
+      </inertial>
+    </link>
+    <joint name="plate_stand_joint" type="fixed">
+      <parent link="table_top"/>
+      <child link="plate_stand"/>
+      <origin xyz="$(arg stand_x) $(arg stand_y_up) $(arg stand_z)"
+              rpy="0 ${stand_yaw_rad} 0"/>
+    </joint>
+
+    <!-- Stand deck markers: 2×3 grid of pocket floors, Y-up like all deck
+         markers (rpy=0 relative to the stand, which is already Y-up).
+         y=0.0075 = pocket floor height above the stand bottom. -->
+    <xacro:deck_marker name="stand_pos1" parent="plate_stand" x="-0.070" y="0.0075" z="0.100"/>
+    <xacro:deck_marker name="stand_pos2" parent="plate_stand" x="-0.070" y="0.0075" z="0.000"/>
+    <xacro:deck_marker name="stand_pos3" parent="plate_stand" x="-0.070" y="0.0075" z="-0.100"/>
+    <xacro:deck_marker name="stand_pos4" parent="plate_stand" x="0.070" y="0.0075" z="0.100"/>
+    <xacro:deck_marker name="stand_pos5" parent="plate_stand" x="0.070" y="0.0075" z="0.000"/>
+    <xacro:deck_marker name="stand_pos6" parent="plate_stand" x="0.070" y="0.0075" z="-0.100"/>
+
+    <!-- Optional STATIC well-plate meshes at each stand marker, for
+         eyeballing the layout only. Runtime picks manage plates dynamically
+         (pick_place.py CollisionObjects), so this defaults OFF. -->
+    <xacro:if value="${'$(arg include_stand_plates)' == 'true'}">
+      <xacro:macro name="stand_plate_vis" params="marker">
+        <link name="${marker}_plate">
+          <visual>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+              <mesh filename="package://unchained_cell/meshes/wp_sd.stl"
+                    scale="0.001 0.001 0.001"/>
+            </geometry>
+            <material name="${marker}_plate_color"><color rgba="0.92 0.92 0.95 1.0"/></material>
+          </visual>
+          <collision>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+              <mesh filename="package://unchained_cell/meshes/wp_sd.stl"
+                    scale="0.001 0.001 0.001"/>
+            </geometry>
+          </collision>
+        </link>
+        <joint name="${marker}_plate_joint" type="fixed">
+          <parent link="${marker}"/>
+          <child link="${marker}_plate"/>
+          <origin xyz="0 0 0" rpy="0 0 0"/>
+        </joint>
+      </xacro:macro>
+      <xacro:stand_plate_vis marker="stand_pos1"/>
+      <xacro:stand_plate_vis marker="stand_pos2"/>
+      <xacro:stand_plate_vis marker="stand_pos3"/>
+      <xacro:stand_plate_vis marker="stand_pos4"/>
+      <xacro:stand_plate_vis marker="stand_pos5"/>
+      <xacro:stand_plate_vis marker="stand_pos6"/>
+    </xacro:if>
   </xacro:if>
 
   <!-- ================ Well-plate model ================

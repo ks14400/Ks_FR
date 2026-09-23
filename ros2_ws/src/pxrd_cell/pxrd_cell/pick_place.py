@@ -1010,22 +1010,17 @@ def purge_obstacle_plates(node, scene_client, deck_names):
 
 
 def purge_plate(node, scene_client):
-    """Best-effort: remove `the_plate` from the world AND from any known parent
-    link it might be attached to. Idempotent — safe to call at script startup
-    to wipe leftover state from a previous run."""
-    # Remove from world
-    rm_world = CollisionObject(); rm_world.id = PLATE_ID
-    rm_world.operation = CollisionObject.REMOVE
-    ps1 = PlanningScene(); ps1.is_diff = True
-    ps1.world.collision_objects.append(rm_world)
-    _apply_scene(node, scene_client, ps1)
+    """Remove `the_plate` (and stray viz/obstacle copies) from the scene.
+    Idempotent; call at script startup.
 
-    # Remove from each link the plate could plausibly be attached to.
+    ORDER MATTERS (MoveIt semantics): removing an AttachedCollisionObject
+    RE-INSERTS the object into the world scene — so detach from every
+    candidate link FIRST, then remove from the world. The old world-remove-
+    first order silently left ghost plates in the world (found via the
+    unchained cell's back-to-back run poisoning; same lineage here).
+    """
     candidate_parents = ["gripper_grasp_link"] + [
-        "deck_9_10_pos1", "deck_9_10_pos2", "deck_9_10_pos3",
-        "deck_vortex_pos1", "deck_vortex_pos2", "deck_vortex_pos3",
-        "deck_vacuum_filtration",
-        "table_top",
+        "pxrd_sample", "table_top",
     ]
     for parent in candidate_parents:
         rm = AttachedCollisionObject()
@@ -1036,6 +1031,13 @@ def purge_plate(node, scene_client):
         ps.robot_state.is_diff = True
         ps.robot_state.attached_collision_objects.append(rm)
         _apply_scene(node, scene_client, ps)
+
+    ps2 = PlanningScene(); ps2.is_diff = True
+    for oid in [PLATE_ID, "the_plate_viz"]:
+        rm_world = CollisionObject(); rm_world.id = oid
+        rm_world.operation = CollisionObject.REMOVE
+        ps2.world.collision_objects.append(rm_world)
+    _apply_scene(node, scene_client, ps2)
     return True
 
 

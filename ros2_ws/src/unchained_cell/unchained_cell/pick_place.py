@@ -24,6 +24,7 @@ Sequence:
 """
 import argparse
 import math
+import os
 import sys
 import threading
 import time
@@ -34,7 +35,9 @@ from rclpy.action import ActionClient
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from tf2_ros import Buffer, TransformListener
-from geometry_msgs.msg import Pose, Quaternion
+from geometry_msgs.msg import Pose, Point, Quaternion
+from shape_msgs.msg import Mesh, MeshTriangle
+from ament_index_python.packages import get_package_share_directory
 from moveit_msgs.action import MoveGroup, ExecuteTrajectory
 from moveit_msgs.msg import (
     Constraints, PositionConstraint, OrientationConstraint, JointConstraint,
@@ -48,11 +51,92 @@ from moveit_msgs.msg import PlanningSceneComponents
 from shape_msgs.msg import SolidPrimitive
 
 
-# Plate geometry (matches the URDF macro)
-PLATE_X = 0.0855  # m  (along deck local X)
-PLATE_Y = 0.025   # m  (vertical thickness in deck frame)
-PLATE_Z = 0.1278  # m  (along deck local Z)
-PLATE_DECK_Y_OFFSET = PLATE_Y / 2.0  # raise plate so bottom = deck dot
+# Legacy single-box plate geometry (matches the old URDF macro). Kept ONLY
+# for reference — the active plate is now a TYPE-PARAMETERIZED MESH, see
+# PLATE_TYPES below. Nothing in the pick/place flow uses these box dims.
+PLATE_X = 0.0855  # m  (along deck local X)          [legacy box, unused]
+PLATE_Y = 0.025   # m  (vertical thickness, deck Y)  [legacy box, unused]
+PLATE_Z = 0.1278  # m  (along deck local Z)          [legacy box, unused]
+PLATE_DECK_Y_OFFSET = PLATE_Y / 2.0  # legacy box half-height lift [unused]
+
+# ============================================================
+# WELL-PLATE RACK TYPES (tall racks carrying OPEN vials)
+# ============================================================
+# The cell carries tall well-plate racks holding OPEN vials. Each rack type
+# has its own height and collision mesh. All types share the same footprint:
+#   X = 0.1275 m  x  Z = 0.0852 m
+# Mesh conventions (all types):
+#   - origin at the BOTTOM CENTER of the rack
+#   - Y-up (matches the deck frames, which are CAD Y-up)
+#   - native units are MILLIMETERS -> vertices are scaled by 0.001 on load
+PLATE_TYPES = {
+    "sd":   {"height": 0.077,  "mesh": "wp_sd.stl"},
+    "8ml":  {"height": 0.066,  "mesh": "wp_8ml.stl"},
+    "20ml": {"height": 0.0649, "mesh": "wp_20ml.stl"},
+}
+PLATE_FOOT_X = 0.1275     # m, footprint along deck local X (all types)
+PLATE_FOOT_Z = 0.0852     # m, footprint along deck local Z (all types)
+PLATE_MESH_SCALE = 0.001  # native mm -> m
+
+# Active plate type — set once in main() via set_plate_type(args.plate_type).
+PLATE_TYPE = "sd"
+PLATE_HEIGHT = PLATE_TYPES[PLATE_TYPE]["height"]      # m, vertical (deck Y)
+PLATE_MESH_FILE = PLATE_TYPES[PLATE_TYPE]["mesh"]
+
+
+def set_plate_type(name):
+    """Select the active plate type (updates PLATE_HEIGHT / PLATE_MESH_FILE)."""
+    global PLATE_TYPE, PLATE_HEIGHT, PLATE_MESH_FILE
+    if name not in PLATE_TYPES:
+        raise ValueError(f"unknown plate type '{name}' "
+                         f"(choices: {', '.join(PLATE_TYPES)})")
+    PLATE_TYPE = name
+    PLATE_HEIGHT = PLATE_TYPES[name]["height"]
+    PLATE_MESH_FILE = PLATE_TYPES[name]["mesh"]
+
+
+_PLATE_MESH_CACHE = {}  # filename -> shape_msgs/Mesh
+
+
+def _load_plate_mesh(filename=None, scale=PLATE_MESH_SCALE):
+    """Load a plate-rack collision mesh as a shape_msgs/Mesh (cached per file).
+
+    Binary-STL reader (struct-based) with vertex dedup. The rack meshes are
+    authored in MILLIMETERS with the origin at the bottom center, so vertices
+    are scaled by `scale` (default 0.001) into meters on load.
+    """
+    if filename is None:
+        filename = PLATE_MESH_FILE
+    cached = _PLATE_MESH_CACHE.get(filename)
+    if cached is not None:
+        return cached
+    import struct
+    share = get_package_share_directory("unchained_cell")
+    path = os.path.join(share, "meshes", filename)
+    with open(path, "rb") as f:
+        f.read(80)
+        n = struct.unpack("<I", f.read(4))[0]
+        vmap = {}; verts = []; tris = []
+        for _ in range(n):
+            d = f.read(50)
+            if len(d) < 50:
+                break
+            v = struct.unpack("<12f", d[:48])
+            idx = []
+            for k in range(3):
+                key = v[3+k*3:6+k*3]
+                if key not in vmap:
+                    vmap[key] = len(verts); verts.append(key)
+                idx.append(vmap[key])
+            t = MeshTriangle(); t.vertex_indices = [idx[0], idx[1], idx[2]]
+            tris.append(t)
+    m = Mesh()
+    m.vertices = [Point(x=float(a) * scale, y=float(b) * scale,
+                        z=float(c) * scale) for a, b, c in verts]
+    m.triangles = tris
+    _PLATE_MESH_CACHE[filename] = m
+    return m
+
 
 PLATE_ID = "the_plate"
 
@@ -134,11 +218,36 @@ PAD_OFFSET_FROM_TCP = 0.069   # m, in gripper +Z direction
 GRIP_DEPTH = 0.012   # m, height of pad contact on plate
 
 # === DERIVED OFFSETS ===
-# When attached, plate center hangs below TCP in gripper +Z direction by:
-#   (PAD_OFFSET_FROM_TCP - half_grip)  ← plate top at pad's top edge
-#   + plate_half_height                ← plate center 12.5 mm below plate top
+# Legacy BOX derivation (center-origin box, kept for reference):
+#   plate CENTER hangs below TCP in gripper +Z by
+#     (PAD_OFFSET_FROM_TCP - half_grip)  ← plate top at pad's top edge
+#     + plate_half_height                ← center is half a height below top
 PLATE_CENTER_BELOW_TCP = PAD_OFFSET_FROM_TCP - GRIP_DEPTH / 2.0 + PLATE_Y / 2.0
-# = 0.069 - 0.006 + 0.0125 = 0.0755 m
+# = 0.069 - 0.006 + 0.0125 = 0.0755 m   [legacy box, unused]
+
+
+def plate_bottom_below_tcp(height=None):
+    """Gripper-frame +Z offset of the attached plate MESH origin (= plate
+    BOTTOM center) below the TCP, for a rack of the given height.
+
+    Derivation (from the legacy box math, converted to a bottom-center
+    origin):
+      - Pads grip the TOP `GRIP_DEPTH` (12 mm) of the rack, so the plate TOP
+        sits half a grip depth ABOVE the pad center:
+          plate_top_below_tcp   = PAD_OFFSET_FROM_TCP - GRIP_DEPTH/2
+      - The box used a CENTER origin, so it added height/2:
+          plate_center_below_tcp = plate_top_below_tcp + height/2
+      - The mesh origin is at the BOTTOM center — a further height/2 down
+        (in gripper +Z, since mesh +Y points along gripper -Z via ATTACH_Q):
+          plate_bottom_below_tcp = plate_top_below_tcp + height
+                                 = PAD_OFFSET_FROM_TCP - GRIP_DEPTH/2 + height
+      i.e. the plate bottom hangs (height - GRIP_DEPTH/2) below the pad
+      center: everything except the gripped top 12 mm hangs below the pads.
+    For sd (height 0.077): 0.069 - 0.006 + 0.077 = 0.140 m.
+    """
+    if height is None:
+        height = PLATE_HEIGHT
+    return PAD_OFFSET_FROM_TCP - GRIP_DEPTH / 2.0 + height
 
 # "Home" / "ready" joint config — wrist values (j4, j5, j6) chosen to match
 # the IK family MoveIt picks for typical pick/place poses. That keeps the
@@ -176,9 +285,17 @@ MAX_JOINT_DELTA           = 0.1   # rad — max single-step delta between waypoi
 # For pick from a deck (and place on deck/table): TCP must be high enough
 # that the pad center lands on the plate top minus half_grip.
 #   pad_center_world_Z = deck_world_Z + plate_height - half_grip
-#                      = deck_world_Z + 0.025 - 0.006 = deck + 0.019
 #   TCP_world_Z = pad_center + PAD_OFFSET_FROM_TCP
-#              = (deck + 0.019) + 0.069 = deck + 0.088
+# For sd (height 0.077): (0.077 - 0.006) + 0.069 = 0.140 m above the deck dot.
+def default_grasp_offset(height=None):
+    """TCP height above the deck dot at grasp/place for a rack of `height`."""
+    if height is None:
+        height = PLATE_HEIGHT
+    return (height - GRIP_DEPTH / 2.0) + PAD_OFFSET_FROM_TCP
+
+
+# Legacy constant computed from the old 25 mm box [unused — the CLI default
+# is now computed from the selected --plate-type at runtime].
 DEFAULT_GRASP_OFFSET = (PLATE_Y - GRIP_DEPTH / 2.0) + PAD_OFFSET_FROM_TCP
 # = 0.019 + 0.069 = 0.088 m
 
@@ -197,11 +314,18 @@ ARM_LINKS = [
 # (so the gripper can approach/grasp), the arm (so the arm can swing past),
 # the device body (plate sits on it), the pedestal, and every deck (plate
 # may be near any of them as it's moved). Real-world-equivalent.
-DEFAULT_TOUCH_LINKS = GRIPPER_LINKS + ARM_LINKS + [
+# Links the plate may LEGITIMATELY touch: the gripper (fingers hold it),
+# the instrument/decks it rests on, and the table/stand. NOT the arm links —
+# the plate sweeping into the forearm/wrist mid-carry is a real self-collision
+# (lesson from the pxrd cell, doubly critical carrying open vials).
+DEFAULT_TOUCH_LINKS = GRIPPER_LINKS + [
     "unchained_junior", "pedestal",
     "deck_9_10_pos1", "deck_9_10_pos2", "deck_9_10_pos3",
     "deck_vortex_pos1", "deck_vortex_pos2", "deck_vortex_pos3",
     "deck_vacuum_filtration",
+    "stand_pos1", "stand_pos2", "stand_pos3",
+    "stand_pos4", "stand_pos5", "stand_pos6",
+    "plate_stand",
     "table", "table_top",  # external lab table (loading station)
 ]
 
@@ -550,11 +674,16 @@ def plan_arm_to_pose_via_ik(node, mg, ik_cli, scene_client,
                             group="fairino16_v6_group", vel=0.2,
                             planning_time=10.0, planning_attempts=30,
                             planner_id="RRTstar",
-                            exec_client=None):
+                            exec_client=None,
+                            keep_orientation_along_path=False,
+                            path_tilt_tol=0.3):
     """Plan to a pose by FIRST searching multiple IK seeds for the joint
     config closest to current, THEN planning a joint-space goal to it.
     OMPL is given a deterministic goal that's by construction close to
     where the arm already is — avoiding long-way-around swings.
+
+    `keep_orientation_along_path`: hold the gripper flat (within path_tilt_tol
+    roll/pitch of `q`) for the whole trajectory so a carried plate can't swing.
     """
     current_state = get_current_robot_state(node, scene_client)
     if current_state is None:
@@ -567,18 +696,29 @@ def plan_arm_to_pose_via_ik(node, mg, ik_cli, scene_client,
                               planning_time=planning_time,
                               planning_attempts=planning_attempts,
                               planner_id=planner_id,
-                              exec_client=exec_client)
+                              exec_client=exec_client,
+                              keep_orientation_along_path=keep_orientation_along_path,
+                              orient_q=q, base_frame=base, link=link,
+                              path_tilt_tol=path_tilt_tol)
 
 
 def plan_arm_to_joints(node, mg, joint_values, vel=0.2, planning_time=5.0,
                        planning_attempts=10, planner_id="RRTstar",
-                       exec_client=None):
+                       exec_client=None,
+                       keep_orientation_along_path=False, orient_q=None,
+                       base_frame="base_link", link="gripper_grasp_link",
+                       path_tilt_tol=0.3):
     """Plan the arm group to a specific joint configuration (deterministic).
 
     Use this for "go to home" or any time you want the arm in a known config
     regardless of previous state.
 
     joint_values: dict {joint_name: target_position_rad}
+
+    `keep_orientation_along_path`: if True and `orient_q` is given, the gripper
+    is held within ±path_tilt_tol rad of `orient_q` (roll/pitch) for EVERY
+    point on the trajectory — keeps a carried plate flat so it can't swing
+    while the arm reconfigures. Yaw is left free so OMPL can still plan.
     """
     goal = MoveGroup.Goal()
     req = goal.request
@@ -599,6 +739,20 @@ def plan_arm_to_joints(node, mg, joint_values, vel=0.2, planning_time=5.0,
         jc.weight = 1.0
         c.joint_constraints.append(jc)
     req.goal_constraints.append(c)
+
+    if keep_orientation_along_path and orient_q is not None:
+        path_oc = OrientationConstraint()
+        path_oc.header.frame_id = base_frame
+        path_oc.link_name = link
+        path_oc.orientation = orient_q
+        path_oc.absolute_x_axis_tolerance = path_tilt_tol
+        path_oc.absolute_y_axis_tolerance = path_tilt_tol
+        path_oc.absolute_z_axis_tolerance = 3.1416   # yaw free along path
+        path_oc.weight = 1.0
+        path_constraints = Constraints()
+        path_constraints.orientation_constraints.append(path_oc)
+        req.path_constraints = path_constraints
+
     if exec_client is not None:
         return _send_plan_validate_execute(node, mg, exec_client, goal)
     goal.planning_options.plan_only = False
@@ -663,13 +817,14 @@ def spawn_obstacle_plates(node, scene_client, deck_names):
         co = CollisionObject()
         co.header.frame_id = deck
         co.id = obstacle_id
-        box = SolidPrimitive(); box.type = SolidPrimitive.BOX
-        box.dimensions = [PLATE_X, PLATE_Y, PLATE_Z]
-        co.primitives.append(box)
+        # Type-parameterized rack MESH (same loader/type as the carried
+        # plate). Mesh origin = bottom center, deck frames are Y-up, so
+        # y = 0 puts the rack bottom flush on the deck marker.
+        co.meshes.append(_load_plate_mesh())
         p = Pose()
-        p.position.y = PLATE_DECK_Y_OFFSET
+        p.position.y = 0.0
         p.orientation = Quaternion(w=1.0)
-        co.primitive_poses.append(p)
+        co.mesh_poses.append(p)
         co.operation = CollisionObject.ADD
 
         # Allow this obstacle to touch the deck/unchained surfaces it sits on
@@ -698,25 +853,30 @@ def purge_obstacle_plates(node, scene_client, deck_names):
     return True
 
 
-def purge_plate(node, scene_client):
-    """Best-effort: remove `the_plate` from the world AND from any known parent
-    link it might be attached to. Idempotent — safe to call at script startup
-    to wipe leftover state from a previous run."""
-    # Remove from world
-    rm_world = CollisionObject(); rm_world.id = PLATE_ID
-    rm_world.operation = CollisionObject.REMOVE
-    ps1 = PlanningScene(); ps1.is_diff = True
-    ps1.world.collision_objects.append(rm_world)
-    _apply_scene(node, scene_client, ps1)
+ALL_DECKS = [
+    "deck_9_10_pos1", "deck_9_10_pos2", "deck_9_10_pos3",
+    "deck_vortex_pos1", "deck_vortex_pos2", "deck_vortex_pos3",
+    "deck_vacuum_filtration",
+    "stand_pos1", "stand_pos2", "stand_pos3",
+    "stand_pos4", "stand_pos5", "stand_pos6",
+    "table_top",
+]
 
-    # Remove from each link the plate could plausibly be attached to.
-    candidate_parents = ["gripper_grasp_link"] + [
-        "deck_9_10_pos1", "deck_9_10_pos2", "deck_9_10_pos3",
-        "deck_vortex_pos1", "deck_vortex_pos2", "deck_vortex_pos3",
-        "deck_vacuum_filtration",
-        "table_top",
-    ]
-    for parent in candidate_parents:
+
+def purge_plate(node, scene_client):
+    """Remove `the_plate` AND all obstacle plates from the scene. Idempotent;
+    call at script startup to wipe leftover state from a previous run.
+
+    ORDER MATTERS (MoveIt semantics): removing an AttachedCollisionObject
+    RE-INSERTS the object into the world scene. So detach from every
+    candidate link FIRST, and only THEN remove from the world — the old
+    world-remove-first order left the detached plate in the world forever
+    ("purge reports success but removes nothing", ghost plates poisoning
+    every back-to-back run).
+    """
+    # 1. Detach from every link the plate could plausibly be attached to
+    #    (each detach may drop a copy into the world).
+    for parent in ["gripper_grasp_link"] + ALL_DECKS:
         rm = AttachedCollisionObject()
         rm.link_name = parent
         rm.object.id = PLATE_ID
@@ -725,6 +885,17 @@ def purge_plate(node, scene_client):
         ps.robot_state.is_diff = True
         ps.robot_state.attached_collision_objects.append(rm)
         _apply_scene(node, scene_client, ps)
+
+    # 2. NOW remove from the world: the plate (possibly just dropped there by
+    #    a detach) and every obstacle plate any previous run may have spawned
+    #    (a later run without --also-spawn-at wouldn't know about them).
+    ps2 = PlanningScene(); ps2.is_diff = True
+    ids = [PLATE_ID] + [f"obstacle_plate_at_{d}" for d in ALL_DECKS]
+    for oid in ids:
+        rm_world = CollisionObject(); rm_world.id = oid
+        rm_world.operation = CollisionObject.REMOVE
+        ps2.world.collision_objects.append(rm_world)
+    _apply_scene(node, scene_client, ps2)
     return True
 
 
@@ -748,15 +919,14 @@ def _attach_plate(node, scene_client, link_name, pose, current_parent=None):
         if not _apply_scene(node, scene_client, ps_rm):
             return False
 
-    # Attach to new link
+    # Attach to new link — the type-parameterized rack MESH (single source
+    # of truth; the legacy box is gone from the flow).
     aco = AttachedCollisionObject()
     aco.link_name = link_name
     aco.object.id = PLATE_ID
     aco.object.header.frame_id = link_name
-    box = SolidPrimitive(); box.type = SolidPrimitive.BOX
-    box.dimensions = [PLATE_X, PLATE_Y, PLATE_Z]
-    aco.object.primitives.append(box)
-    aco.object.primitive_poses.append(pose)
+    aco.object.meshes.append(_load_plate_mesh())
+    aco.object.mesh_poses.append(pose)
     aco.object.operation = CollisionObject.ADD
     aco.touch_links = DEFAULT_TOUCH_LINKS + [link_name]
 
@@ -767,9 +937,14 @@ def _attach_plate(node, scene_client, link_name, pose, current_parent=None):
 
 
 def attach_plate_to_deck(node, scene_client, deck_name, current_parent=None):
-    """Attach plate to a deck link with bottom flush at the deck origin (Y-up)."""
+    """Attach plate to a deck link, bottom flush at the deck origin (Y-up).
+
+    The rack mesh origin is at its BOTTOM CENTER, so unlike the legacy
+    center-origin box (which needed a half-height lift), the mesh sits flush
+    with y = 0 in the deck frame.
+    """
     pose = Pose()
-    pose.position.y = PLATE_DECK_Y_OFFSET   # half-thickness lift in deck Y
+    pose.position.y = 0.0                   # mesh origin = bottom center
     pose.orientation = Quaternion(w=1.0)
     return _attach_plate(node, scene_client, deck_name, pose, current_parent)
 
@@ -777,13 +952,16 @@ def attach_plate_to_deck(node, scene_client, deck_name, current_parent=None):
 def attach_plate_to_gripper(node, scene_client, current_parent):
     """Attach plate to gripper_grasp_link with the proper grasp orientation.
 
-    Plate is positioned so the gripper pads grip its TOP 12 mm. The rest of
-    the plate hangs below the pads — i.e., plate center is below the TCP
-    in gripper +Z by PLATE_CENTER_BELOW_TCP.
+    Pads grip the TOP GRIP_DEPTH (12 mm) of the rack; the rest hangs below.
+    With the mesh origin at the BOTTOM center, the attach z offset in the
+    gripper frame is plate_bottom_below_tcp(PLATE_HEIGHT)
+      = PAD_OFFSET_FROM_TCP - GRIP_DEPTH/2 + height
+    (see the derivation in plate_bottom_below_tcp — the plate bottom hangs
+    `height - GRIP_DEPTH/2` below the pad center).
     """
     pose = Pose()
-    pose.position.z = PLATE_CENTER_BELOW_TCP   # plate hangs below pads
-    pose.orientation = ATTACH_Q                # plate "thickness" axis = gripper -Z
+    pose.position.z = plate_bottom_below_tcp(PLATE_HEIGHT)
+    pose.orientation = ATTACH_Q     # mesh +Y (rack up) = gripper -Z
     return _attach_plate(
         node, scene_client, "gripper_grasp_link", pose, current_parent)
 
@@ -964,12 +1142,22 @@ def main():
     p.add_argument("--target", required=True)
     p.add_argument("--hover", type=float, default=0.15,
                    help="Height (m) above deck for approach/lift (default 0.15)")
-    p.add_argument("--grasp-offset", type=float, default=DEFAULT_GRASP_OFFSET,
-                   help=f"TCP height above the deck/table dot at grasp & place. "
-                        f"Computed default ({DEFAULT_GRASP_OFFSET:.3f}) puts the "
-                        f"gripper pads on the top 12 mm of the plate, with the "
-                        f"rest of the plate hanging below. Tune PAD_OFFSET_FROM_TCP "
-                        f"in pick_place.py if the pads don't visually align.")
+    p.add_argument("--plate-type", choices=sorted(PLATE_TYPES),
+                   default="sd",
+                   help="Well-plate rack type being carried. Sets the rack "
+                        "height and collision mesh: "
+                        + "; ".join(f"{k}: h={v['height']*1000:.1f}mm "
+                                    f"({v['mesh']})"
+                                    for k, v in PLATE_TYPES.items())
+                        + ". All share a 127.5 x 85.2 mm footprint. "
+                          "Default sd.")
+    p.add_argument("--grasp-offset", type=float, default=None,
+                   help="TCP height above the deck/table dot at grasp & place. "
+                        "Default is computed from the selected --plate-type: "
+                        "(height - GRIP_DEPTH/2) + PAD_OFFSET_FROM_TCP, which "
+                        "puts the gripper pads on the top 12 mm of the rack, "
+                        "with the rest hanging below. Tune PAD_OFFSET_FROM_TCP "
+                        "in pick_place.py if the pads don't visually align.")
     p.add_argument("--pick-lift", type=float, default=0.020,
                    help="Extra height (m) added to --grasp-offset for the DECK "
                         "PICK only (not the table place). Raises where the gripper "
@@ -1007,19 +1195,22 @@ def main():
                    help="Cartesian lift before opening at place (m, default 0.015). "
                         "Gives the fingertips clearance from the table/deck before "
                         "they spread — canonical industrial release behavior.")
-    p.add_argument("--path-tilt-tol", type=float, default=0.3,
-                   help="Tilt tolerance (rad) for the gripper during transit "
-                        "while carrying the plate. Default 0.3 (~17°). Tighten "
-                        "for sensitive contents (open liquids); loosen if "
-                        "transit planning fails.")
-    p.add_argument("--keep-plate-flat", action="store_true",
-                   help="Add an explicit path orientation constraint during "
-                        "transit (gripper stays within --path-tilt-tol of "
-                        "vertical for the entire trajectory). OFF by default "
-                        "because it makes OMPL planning much more fragile. "
-                        "Enable only if your contents (open liquids etc.) "
-                        "genuinely require it; otherwise the natural OMPL "
-                        "path keeps the gripper roughly vertical anyway.")
+    p.add_argument("--path-tilt-tol", type=float, default=0.035,
+                   help="Tilt tolerance (rad) for the gripper on every OMPL "
+                        "phase executed while carrying the plate. Default "
+                        "0.035 (~2°) — a HARD limit, because the racks carry "
+                        "OPEN vials. Loosen only if constrained transit "
+                        "planning genuinely cannot find a path.")
+    p.add_argument("--keep-plate-flat", action=argparse.BooleanOptionalAction,
+                   default=True,
+                   help="Hold the grasp orientation as a PATH constraint "
+                        "(gripper within --path-tilt-tol of the grasp "
+                        "orientation for the entire trajectory) on every "
+                        "carried OMPL phase (via-home and transit-above-"
+                        "target; Cartesian phases keep a fixed orientation "
+                        "by construction). ON by default — the racks carry "
+                        "OPEN vials. Disable with --no-keep-plate-flat only "
+                        "for diagnostics with an empty rack.")
     p.add_argument("--transit-time", type=float, default=15.0,
                    help="OMPL planning time for the constrained transit phase "
                         "(seconds). Path constraints make planning slower, so "
@@ -1057,9 +1248,37 @@ def main():
                         "--also-spawn-at deck_9_10_pos1,deck_9_10_pos3")
     args = p.parse_args()
 
+    # ── Plate type: sets rack height + collision mesh for every attach ──
+    set_plate_type(args.plate_type)
+    print(f"[plate] type '{PLATE_TYPE}': height {PLATE_HEIGHT*1000:.1f}mm, "
+          f"mesh {PLATE_MESH_FILE}", file=sys.stderr)
+
+    # ── Grasp offset: default follows the selected plate type ──
+    # (height - GRIP_DEPTH/2) + PAD_OFFSET_FROM_TCP
+    if args.grasp_offset is None:
+        args.grasp_offset = default_grasp_offset(PLATE_HEIGHT)
+        print(f"[plate] --grasp-offset defaulted to "
+              f"{args.grasp_offset:.4f} m for type '{PLATE_TYPE}'",
+              file=sys.stderr)
+
     # ── Pick grasp height: deck pick stops --pick-lift higher than place ──
     # so the fingertips clear the deck. Place still uses plain grasp_offset.
     pick_offset = args.grasp_offset + args.pick_lift
+
+    # ── Hover must be GRASP-RELATIVE, not absolute ──
+    # With tall racks (sd = 77mm) a fixed hover 0.15 sits BELOW the grasp
+    # height (0.140+0.020): the "approach above" pose dangled the splayed-open
+    # fingertips at rail-top height beside deck_9_10_pos1 (~1mm interference,
+    # deterministic contact) and the same low carry grazed the rail mid-swing
+    # en route to vortex_pos2. Clamp hover to grasp + pick_lift + clearance.
+    HOVER_CLEARANCE = 0.06
+    min_hover = args.grasp_offset + args.pick_lift + HOVER_CLEARANCE
+    if args.hover < min_hover:
+        print(f"[hover] raising --hover {args.hover:.3f} -> {min_hover:.3f} "
+              f"(grasp {args.grasp_offset:.3f} + lift {args.pick_lift:.3f} "
+              f"+ clearance {HOVER_CLEARANCE:.3f}) for plate '{PLATE_TYPE}'",
+              file=sys.stderr)
+        args.hover = min_hover
 
     # ── Gripper width: --grip-mm overrides --grip-value ──
     if args.grip_mm is not None:
@@ -1292,6 +1511,12 @@ def main():
     # much easier to plan smoothly than one long swing through awkward
     # joint configs.
     # Gripper stays pointing down throughout, plate held horizontal.
+    # TILT HARD LIMIT: the plate is attached to the gripper from here until
+    # release, and the racks carry OPEN vials — so every OMPL phase in the
+    # carried window holds the grasp orientation (DOWN_Q, which includes the
+    # grasp yaw comp) as a PATH constraint within ±--path-tilt-tol (~2°).
+    # Cartesian phases (lift/descend/pre-release) keep a fixed orientation
+    # by construction and need no extra constraint.
     # ============================================================
     if not _run_phase(node, phases, "via home (carrying plate)", "OMPL",
                       lambda: plan_arm_to_joints(
@@ -1299,9 +1524,15 @@ def main():
                           planning_time=args.planning_time,
                           planning_attempts=args.num_attempts,
                           planner_id=args.planner,
-                          exec_client=exec_client),
+                          exec_client=exec_client,
+                          keep_orientation_along_path=args.keep_plate_flat,
+                          orient_q=DOWN_Q, base_frame="base_link",
+                          link="gripper_grasp_link",
+                          path_tilt_tol=args.path_tilt_tol),
                       via=("home: " + ", ".join(
                           f"{k}={v:+.2f}" for k, v in HOME_JOINTS.items())),
+                      tilt_limit=(f"±{args.path_tilt_tol:.3f} rad along path"
+                                  if args.keep_plate_flat else "OFF"),
                       note="splits the big transit into two cleaner segments"):
         fail("via-home failed")
 
@@ -1320,9 +1551,15 @@ def main():
                           planning_time=args.transit_time,
                           planner_id=args.planner,
                           planning_attempts=args.num_attempts,
-                          exec_client=exec_client),
+                          exec_client=exec_client,
+                          keep_orientation_along_path=args.keep_plate_flat,
+                          path_tilt_tol=args.path_tilt_tol),
                       target=f"({tx:+.3f}, {ty:+.3f}, {tz+args.hover:+.3f}) gripper-down",
-                      method="IK-seeded joint goal (no long swing)",
+                      method="IK-seeded joint goal"
+                             + (" + plate-flat path" if args.keep_plate_flat
+                                else " (no long swing)"),
+                      tilt_limit=(f"±{args.path_tilt_tol:.3f} rad along path"
+                                  if args.keep_plate_flat else "OFF"),
                       ompl=f"{args.planner}, {args.transit_time:.0f}s × {args.num_attempts}",
                       budget=f"≤{MAX_TRAVEL_PER_OMPL_PHASE:.1f}rad total, "
                              f"≤{MAX_SINGLE_JOINT_TRAVEL:.1f}rad per joint"):

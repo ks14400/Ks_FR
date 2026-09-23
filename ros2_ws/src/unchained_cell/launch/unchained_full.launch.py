@@ -45,6 +45,11 @@ def launch_setup(context, *args, **kwargs):
     table_d = LaunchConfiguration("table_d").perform(context)
     table_h = LaunchConfiguration("table_h").perform(context)
     include_table = LaunchConfiguration("include_table").perform(context)
+    stand_x = LaunchConfiguration("stand_x").perform(context)
+    stand_y_up = LaunchConfiguration("stand_y_up").perform(context)
+    stand_z = LaunchConfiguration("stand_z").perform(context)
+    stand_yaw_deg = LaunchConfiguration("stand_yaw_deg").perform(context)
+    include_stand_plates = LaunchConfiguration("include_stand_plates").perform(context)
 
     robot_num = robot_model[2:]
     moveit_pkg = f"fairino{robot_num}_v6_moveit2_config"
@@ -74,6 +79,11 @@ def launch_setup(context, *args, **kwargs):
                 "table_d": table_d,
                 "table_h": table_h,
                 "include_table": include_table,
+                "stand_x": stand_x,
+                "stand_y_up": stand_y_up,
+                "stand_z": stand_z,
+                "stand_yaw_deg": stand_yaw_deg,
+                "include_stand_plates": include_stand_plates,
                 # Override the upstream all-zeros initial_positions with our
                 # ready pose so the arm comes up folded, not extended.
                 "initial_positions_file":
@@ -91,6 +101,22 @@ def launch_setup(context, *args, **kwargs):
         .planning_pipelines(pipelines=["ompl"])
         .to_moveit_configs()
     )
+
+    # ── Fine collision-check resolution for OMPL ──
+    # The instrument scan contains THIN features (e.g. the 9-10 rail sheet,
+    # thin walls). With the default longest_valid_segment_fraction, OMPL
+    # validates motions coarsely; thin obstacles slip BETWEEN its checks and
+    # only the post-processing resampler catches them — symptom: "Computed
+    # path is not valid. Invalid states at index [k]" at the SAME index for
+    # every planner/attempt, plan never executes. Finer resolution makes
+    # OMPL see the feature during search and route around it.
+    try:
+        ompl_cfg = moveit_config.planning_pipelines["ompl"]
+        for grp in ("fairino16_v6_group", "gripper"):
+            if grp in ompl_cfg and isinstance(ompl_cfg[grp], dict):
+                ompl_cfg[grp]["longest_valid_segment_fraction"] = 0.002
+    except Exception:
+        pass  # never let a config tweak break the launch
 
     # ── robot_state_publisher ──
     rsp = Node(
@@ -267,17 +293,31 @@ def generate_launch_description():
                               description="Robot mount Z offset in pedestal frame (m)"),
         DeclareLaunchArgument("include_table", default_value="true",
                               description="Include the lab loading table in the scene"),
-        DeclareLaunchArgument("table_x", default_value="0.7",
+        DeclareLaunchArgument("table_x", default_value="-0.3",
                               description="Table X position in world (m)"),
-        DeclareLaunchArgument("table_y", default_value="-1.3",
+        DeclareLaunchArgument("table_y", default_value="-1.7",
                               description="Table Y position in world (m)"),
         DeclareLaunchArgument("table_z", default_value="0.0",
                               description="Table Z position in world (m); top of table is at this + table_h"),
-        DeclareLaunchArgument("table_w", default_value="0.30",
+        DeclareLaunchArgument("table_w", default_value="0.6",
                               description="Table width (X dimension, m)"),
-        DeclareLaunchArgument("table_d", default_value="0.30",
+        DeclareLaunchArgument("table_d", default_value="0.6",
                               description="Table depth (Y dimension, m)"),
-        DeclareLaunchArgument("table_h", default_value="0.70",
+        DeclareLaunchArgument("table_h", default_value="0.75",
                               description="Table height (Z dimension, m)"),
+        DeclareLaunchArgument("stand_x", default_value="0.0",
+                              description="Plate stand X offset in table_top frame (m)"),
+        DeclareLaunchArgument("stand_y_up", default_value="0.0",
+                              description="Plate stand vertical offset above table top "
+                                          "(table_top local +Y = world up, m)"),
+        DeclareLaunchArgument("stand_z", default_value="0.0",
+                              description="Plate stand Z offset in table_top frame (m)"),
+        DeclareLaunchArgument("stand_yaw_deg", default_value="0",
+                              description="Plate stand yaw about vertical axis (deg); "
+                                          "applied in the pitch slot of the Y-up "
+                                          "table_top frame"),
+        DeclareLaunchArgument("include_stand_plates", default_value="false",
+                              description="Spawn static wp_sd.stl plates at the 6 stand "
+                                          "markers for layout eyeballing"),
         OpaqueFunction(function=launch_setup),
     ])
