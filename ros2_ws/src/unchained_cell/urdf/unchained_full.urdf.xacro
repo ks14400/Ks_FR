@@ -87,7 +87,7 @@
   <!-- Generic Y-up marker. Default parent is the Unchained (CAD frame);
        pass parent:=plate_stand for the stand pockets. Both parents carry a
        Y-up frame, so rpy=0 keeps every marker Y-up. -->
-  <xacro:macro name="deck_marker" params="name x y z parent:=unchained_junior">
+  <xacro:macro name="deck_marker" params="name x y z parent:=unchained_junior yaw:=0">
     <link name="${name}">
       <visual>
         <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -98,7 +98,8 @@
     <joint name="${name}_joint" type="fixed">
       <parent link="${parent}"/>
       <child link="${name}"/>
-      <origin xyz="${x} ${y} ${z}" rpy="0 0 0"/>
+      <!-- yaw about the VERTICAL axis = pitch slot (parent frames are Y-up) -->
+      <origin xyz="${x} ${y} ${z}" rpy="0 ${yaw} 0"/>
     </joint>
   </xacro:macro>
 
@@ -139,7 +140,9 @@
   <xacro:arg name="stand_y_up" default="0.0"/>
   <xacro:arg name="stand_z" default="0.0"/>
   <xacro:arg name="stand_yaw_deg" default="0"/>
-  <!-- Static wp_sd.stl plates at the stand markers, for layout eyeballing. -->
+  <!-- Static well-plate meshes at the stand markers, for layout eyeballing.
+       stand_plate_mesh selects the rack type shown: wp_8ml / wp_20ml / wp_sd. -->
+  <xacro:arg name="stand_plate_mesh" default="wp_8ml"/>
   <xacro:arg name="include_stand_plates" default="false"/>
 
   <xacro:property name="stand_yaw_deg_prop" value="$(arg stand_yaw_deg)"/>
@@ -198,7 +201,7 @@
       <visual>
         <origin xyz="0 0 0" rpy="0 0 0"/>
         <geometry>
-          <mesh filename="package://unchained_cell/meshes/plate_stand.stl"
+          <mesh filename="package://unchained_cell/meshes/wellplate_holder.stl"
                 scale="0.001 0.001 0.001"/>
         </geometry>
         <material name="stand_grey"><color rgba="0.45 0.45 0.5 1.0"/></material>
@@ -206,7 +209,7 @@
       <collision>
         <origin xyz="0 0 0" rpy="0 0 0"/>
         <geometry>
-          <mesh filename="package://unchained_cell/meshes/plate_stand.stl"
+          <mesh filename="package://unchained_cell/meshes/wellplate_holder.stl"
                 scale="0.001 0.001 0.001"/>
         </geometry>
       </collision>
@@ -224,13 +227,24 @@
 
     <!-- Stand deck markers: 2×3 grid of pocket floors, Y-up like all deck
          markers (rpy=0 relative to the stand, which is already Y-up).
-         y=0.0075 = pocket floor height above the stand bottom. -->
-    <xacro:deck_marker name="stand_pos1" parent="plate_stand" x="-0.070" y="0.0075" z="0.100"/>
-    <xacro:deck_marker name="stand_pos2" parent="plate_stand" x="-0.070" y="0.0075" z="0.000"/>
-    <xacro:deck_marker name="stand_pos3" parent="plate_stand" x="-0.070" y="0.0075" z="-0.100"/>
-    <xacro:deck_marker name="stand_pos4" parent="plate_stand" x="0.070" y="0.0075" z="0.100"/>
-    <xacro:deck_marker name="stand_pos5" parent="plate_stand" x="0.070" y="0.0075" z="0.000"/>
-    <xacro:deck_marker name="stand_pos6" parent="plate_stand" x="0.070" y="0.0075" z="-0.100"/>
+         y=0.0155 = GUIDE-RAIL TOP: plates rest ON the rails (support ledges);
+         a floor-resting plate would intersect the rails where its long side
+         overhangs the 100mm pocket span (found via honest carried-plate
+         collision checking, 2026-09-23). -->
+    <!-- wellplate_holder (2026-09-24): 350x500x12.5mm plate, 8 recessed
+         pockets (2 cols x 4 rows), pocket 128.0 x 86.0mm, floor at y=7.5
+         (5mm deep). Plates SEAT ON THE POCKET FLOOR -> marker y=0.0075.
+         Pocket centers measured from the mesh: X=+-87.5, Z=+-62.5/+-187.5.
+         pos1-4 = col X=-0.0875 (rows Z +0.1875..-0.1875),
+         pos5-8 = col X=+0.0875 (same row order). -->
+    <xacro:deck_marker name="stand_pos1" parent="plate_stand" x="-0.0875" y="0.0075" z="0.1875" yaw="${pi/2}"/>
+    <xacro:deck_marker name="stand_pos2" parent="plate_stand" x="-0.0875" y="0.0075" z="0.0625" yaw="${pi/2}"/>
+    <xacro:deck_marker name="stand_pos3" parent="plate_stand" x="-0.0875" y="0.0075" z="-0.0625" yaw="${pi/2}"/>
+    <xacro:deck_marker name="stand_pos4" parent="plate_stand" x="-0.0875" y="0.0075" z="-0.1875" yaw="${pi/2}"/>
+    <xacro:deck_marker name="stand_pos5" parent="plate_stand" x="0.0875" y="0.0075" z="0.1875" yaw="${pi/2}"/>
+    <xacro:deck_marker name="stand_pos6" parent="plate_stand" x="0.0875" y="0.0075" z="0.0625" yaw="${pi/2}"/>
+    <xacro:deck_marker name="stand_pos7" parent="plate_stand" x="0.0875" y="0.0075" z="-0.0625" yaw="${pi/2}"/>
+    <xacro:deck_marker name="stand_pos8" parent="plate_stand" x="0.0875" y="0.0075" z="-0.1875" yaw="${pi/2}"/>
 
     <!-- Optional STATIC well-plate meshes at each stand marker, for
          eyeballing the layout only. Runtime picks manage plates dynamically
@@ -241,7 +255,7 @@
           <visual>
             <origin xyz="0 0 0" rpy="0 0 0"/>
             <geometry>
-              <mesh filename="package://unchained_cell/meshes/wp_sd.stl"
+              <mesh filename="package://unchained_cell/meshes/$(arg stand_plate_mesh).stl"
                     scale="0.001 0.001 0.001"/>
             </geometry>
             <material name="${marker}_plate_color"><color rgba="0.92 0.92 0.95 1.0"/></material>
@@ -249,7 +263,7 @@
           <collision>
             <origin xyz="0 0 0" rpy="0 0 0"/>
             <geometry>
-              <mesh filename="package://unchained_cell/meshes/wp_sd.stl"
+              <mesh filename="package://unchained_cell/meshes/$(arg stand_plate_mesh).stl"
                     scale="0.001 0.001 0.001"/>
             </geometry>
           </collision>
@@ -266,6 +280,8 @@
       <xacro:stand_plate_vis marker="stand_pos4"/>
       <xacro:stand_plate_vis marker="stand_pos5"/>
       <xacro:stand_plate_vis marker="stand_pos6"/>
+      <xacro:stand_plate_vis marker="stand_pos7"/>
+      <xacro:stand_plate_vis marker="stand_pos8"/>
     </xacro:if>
   </xacro:if>
 

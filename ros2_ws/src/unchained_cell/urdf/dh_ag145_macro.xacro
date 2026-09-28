@@ -47,19 +47,27 @@
       </inertial>
     </link>
 
+    <!-- SIGN CONVENTION FIX (measured 2026-09): the original model rendered
+         joint 0.0 as jaws CLOSED (18mm tip separation) and -0.65 as OPEN
+         (161mm), i.e. mirrored vs the real AG-145 + fr_bridge mapping
+         (0.0 = SDK 100% = open, -0.65 = SDK 0% = closed, hardware-verified).
+         Fix: every gripper joint has its axis flipped and a constant
+         0.65*multiplier rotation baked into its origin, so joint value v now
+         renders what the old model rendered at (-0.65 - v). Joint VALUES and
+         limits are unchanged -> all software & bridge conventions intact. -->
     <joint name="${prefix}gripper_finger1_joint" type="revolute">
       <parent link="${prefix}gripper_base_link"/>
       <child link="${prefix}gripper_finger1_knuckle_link"/>
-      <axis xyz="0 -1 0"/>
-      <origin rpy="0.0 0.0 ${pi}" xyz="-0.016 0 0.10586"/>
+      <axis xyz="0 1 0"/>
+      <origin rpy="0 0.650000 ${pi}" xyz="-0.016 0 0.10586"/>
       <limit lower="-0.65" upper="0.0" velocity="100.0" effort="1000"/>
     </joint>
 
     <joint name="${prefix}gripper_finger2_joint" type="revolute">
       <parent link="${prefix}gripper_base_link"/>
       <child link="${prefix}gripper_finger2_knuckle_link"/>
-      <axis xyz="0 -1 0"/>
-      <origin rpy="0.0 0.0 0.0" xyz="0.016 0 0.10586"/>
+      <axis xyz="0 1 0"/>
+      <origin rpy="0 0.650000 0.0" xyz="0.016 0 0.10586"/>
       <limit lower="-3.14" upper="3.14" velocity="100.0" effort="1000"/>
       <mimic joint="${prefix}gripper_finger1_joint"/>
     </joint>
@@ -97,8 +105,8 @@
     <joint name="${prefix}gripper_finger1_finger_joint" type="continuous">
       <parent link="${prefix}gripper_finger1_knuckle_link"/>
       <child link="${prefix}gripper_finger1_finger_link"/>
-      <axis xyz="0 -1 0"/>
-      <origin xyz="0.036999 0 -0.00019698" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+      <origin xyz="0.036999 0 -0.00019698" rpy="0 0.325000 0"/>
       <limit lower="-3.14" upper="3.14" velocity="100.0" effort="105"/>
       <mimic joint="${prefix}gripper_finger1_joint" multiplier="0.5" offset="0"/>
     </joint>
@@ -106,8 +114,8 @@
     <joint name="${prefix}gripper_finger2_finger_joint" type="continuous">
       <parent link="${prefix}gripper_finger2_knuckle_link"/>
       <child link="${prefix}gripper_finger2_finger_link"/>
-      <axis xyz="0 -1 0"/>
-      <origin xyz="0.036999 0 -0.00019698" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+      <origin xyz="0.036999 0 -0.00019698" rpy="0 0.325000 0"/>
       <limit lower="-3.14" upper="3.14" velocity="100.0" effort="105"/>
       <mimic joint="${prefix}gripper_finger1_joint" multiplier="0.5" offset="0"/>
     </joint>
@@ -145,8 +153,8 @@
     <joint name="${prefix}gripper_finger1_inner_knuckle_joint" type="continuous">
       <parent link="${prefix}gripper_base_link"/>
       <child link="${prefix}gripper_finger1_inner_knuckle_link"/>
-      <axis xyz="0 -1 0"/>
-      <origin rpy="0.0 0.0 ${pi}" xyz="-0.016 0 0.10586"/>
+      <axis xyz="0 1 0"/>
+      <origin rpy="0 0.968500 ${pi}" xyz="-0.016 0 0.10586"/>
       <limit lower="-3.14" upper="3.14" velocity="100.0" effort="105"/>
       <mimic joint="${prefix}gripper_finger1_joint" multiplier="1.49" offset="0"/>
     </joint>
@@ -154,8 +162,8 @@
     <joint name="${prefix}gripper_finger2_inner_knuckle_joint" type="continuous">
       <parent link="${prefix}gripper_base_link"/>
       <child link="${prefix}gripper_finger2_inner_knuckle_link"/>
-      <axis xyz="0 -1 0"/>
-      <origin rpy="0.0 0.0 0.0" xyz="0.016 0 0.10586"/>
+      <axis xyz="0 1 0"/>
+      <origin rpy="0 0.968500 0.0" xyz="0.016 0 0.10586"/>
       <limit lower="-3.14" upper="3.14" velocity="100.0" effort="105"/>
       <mimic joint="${prefix}gripper_finger1_joint" multiplier="1.49" offset="0"/>
     </joint>
@@ -193,8 +201,8 @@
     <joint name="${prefix}gripper_finger1_finger_tip_joint" type="continuous">
       <parent link="${prefix}gripper_finger1_inner_knuckle_link"/>
       <child link="${prefix}gripper_finger1_finger_tip_link"/>
-      <axis xyz="0 1 0"/>
-      <origin xyz="-0.0081054 0 0.086119" rpy="0.0 0.0 0.0"/>
+      <axis xyz="0 -1 0"/>
+      <origin xyz="-0.0081054 0 0.086119" rpy="0 -0.968500 0.0"/>
       <limit lower="-3.14" upper="3.14" velocity="100.0" effort="0.1"/>
       <mimic joint="${prefix}gripper_finger1_joint" multiplier="1.49"/>
     </joint>
@@ -202,8 +210,8 @@
     <joint name="${prefix}gripper_finger2_finger_tip_joint" type="continuous">
       <parent link="${prefix}gripper_finger2_inner_knuckle_link"/>
       <child link="${prefix}gripper_finger2_finger_tip_link"/>
-      <axis xyz="0 1 0"/>
-      <origin rpy="0.0 0.0 0.0" xyz="-0.0081054 0 0.086119"/>
+      <axis xyz="0 -1 0"/>
+      <origin rpy="0 -0.968500 0.0" xyz="-0.0081054 0 0.086119"/>
       <limit lower="-3.14" upper="3.14" velocity="100.0" effort="0.1"/>
       <mimic joint="${prefix}gripper_finger1_joint" multiplier="1.49"/>
     </joint>

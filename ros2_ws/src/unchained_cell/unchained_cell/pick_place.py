@@ -70,12 +70,18 @@ PLATE_DECK_Y_OFFSET = PLATE_Y / 2.0  # legacy box half-height lift [unused]
 #   - Y-up (matches the deck frames, which are CAD Y-up)
 #   - native units are MILLIMETERS -> vertices are scaled by 0.001 on load
 PLATE_TYPES = {
-    "sd":   {"height": 0.077,  "mesh": "wp_sd.stl"},
-    "8ml":  {"height": 0.066,  "mesh": "wp_8ml.stl"},
-    "20ml": {"height": 0.0649, "mesh": "wp_20ml.stl"},
+    # grip_center: pad center height above the rack bottom — must stay on the
+    # FLAT BODY side face (measured from the accurate 2026-09-24 CAD):
+    #   8ml body 0..44.5mm (vials +21.5 above it) -> grip HIGH at 34mm, which
+    #        lifts the inner knuckles clear of the short vials (FCL-verified);
+    #   20ml body 0..25.1mm (vials +40!)  -> grip 15mm, extensions likely needed;
+    #   sd   body 0..29.0mm              -> grip 19mm.
+    "sd":   {"height": 0.077,  "mesh": "wp_sd.stl",   "grip_center": 0.019},
+    "8ml":  {"height": 0.066,  "mesh": "wp_8ml.stl",  "grip_center": 0.030},
+    "20ml": {"height": 0.0649, "mesh": "wp_20ml.stl", "grip_center": 0.015},
 }
-PLATE_FOOT_X = 0.1275     # m, footprint along deck local X (all types)
-PLATE_FOOT_Z = 0.0852     # m, footprint along deck local Z (all types)
+PLATE_FOOT_X = 0.1279     # m, footprint along deck local X (accurate CAD 2026-09-24)
+PLATE_FOOT_Z = 0.0855     # m, footprint along deck local Z (accurate CAD 2026-09-24)
 PLATE_MESH_SCALE = 0.001  # native mm -> m
 
 # Active plate type — set once in main() via set_plate_type(args.plate_type).
@@ -93,6 +99,8 @@ def set_plate_type(name):
     PLATE_TYPE = name
     PLATE_HEIGHT = PLATE_TYPES[name]["height"]
     PLATE_MESH_FILE = PLATE_TYPES[name]["mesh"]
+    global GRIP_CENTER_ABOVE_BOTTOM
+    GRIP_CENTER_ABOVE_BOTTOM = PLATE_TYPES[name].get("grip_center", 0.024)
 
 
 _PLATE_MESH_CACHE = {}  # filename -> shape_msgs/Mesh
@@ -139,6 +147,21 @@ def _load_plate_mesh(filename=None, scale=PLATE_MESH_SCALE):
 
 
 PLATE_ID = "the_plate"
+REST_FLOAT = 0.005  # m — nest wall-base geometry blocks below bottom+4mm (measured); 5mm = clean + margin
+# The holder/table have no such wall: plates must SEAT on the surface
+# (user-flagged 2026-09-25: 5mm float left racks hovering on the holder).
+# 0.5mm is visually flush but keeps FCL out of the ambiguous zero-gap case.
+REST_FLOAT_OPEN = 0.0005
+
+
+def rest_float_for(deck_name):
+    """Per-deck rest float: instrument nests keep the measured 5mm stand-off;
+    open surfaces (stand pockets, table) seat flush."""
+    if deck_name.startswith("stand_pos") or deck_name == "table_top":
+        return REST_FLOAT_OPEN
+    return REST_FLOAT
+HELD_BOTTOM_BELOW_TCP = None  # measured at rigid attach; used by the place
+HELD_R_PG = None  # measured plate-in-gripper rotation; place orientation is computed from it
 
 # Gripper limits (URDF): -0.65 closed, 0 open.
 GRIPPER_OPEN = 0.0
@@ -152,16 +175,35 @@ GRIPPER_CLOSED_JOINT = -0.65  # URDF lower limit = jaws fully closed
 GRIPPER_STROKE_MM = 145.0
 
 
-def grip_mm_to_joint(mm):
-    """Desired jaw opening (mm) -> gripper_finger1_joint value
-    (0.0 = fully open, -0.65 = fully closed)."""
-    frac = max(0.0, min(1.0, mm / GRIPPER_STROKE_MM))
-    return GRIPPER_CLOSED_JOINT * (1.0 - frac)
+# SIM APERTURE CALIBRATION (2026-09-24): the AG-145 model is a 4-bar linkage,
+# so pad-face separation is NOT linear in the joint value. Measured by FK over
+# the fixed URDF (pad-gap between finger_tip collision meshes), cubic fit
+# residual < 0.05mm:  gap_mm(v) = c3 v^3 + c2 v^2 + c1 v + c0.
+# The BRIDGE keeps its own linear rad<->pct map for hardware — the real
+# gripper is force-controlled and stops on the plate, so the two conventions
+# meet safely at the workpiece.
+_APERTURE_POLY = (-86.982, -156.587, 164.124, 148.717)
 
 
 def joint_to_grip_mm(joint):
-    """gripper_finger1_joint value -> jaw opening (mm)."""
-    return (1.0 - joint / GRIPPER_CLOSED_JOINT) * GRIPPER_STROKE_MM
+    """gripper_finger1_joint value -> pad-face opening (mm), model-accurate."""
+    c3, c2, c1, c0 = _APERTURE_POLY
+    return ((c3 * joint + c2) * joint + c1) * joint + c0
+
+
+def grip_mm_to_joint(mm):
+    """Desired pad-face opening (mm) -> gripper_finger1_joint value
+    (0.0 = fully open ~148.7mm, -0.65 = fully closed). Bisection on the
+    calibrated cubic (monotonic over the joint range)."""
+    mm = max(0.0, min(joint_to_grip_mm(0.0), mm))
+    lo, hi = GRIPPER_CLOSED_JOINT, 0.0   # gap(lo)~0 < mm < gap(hi)
+    for _ in range(50):
+        mid = 0.5 * (lo + hi)
+        if joint_to_grip_mm(mid) < mm:
+            lo = mid
+        else:
+            hi = mid
+    return 0.5 * (lo + hi)
 
 # Gripper-down orientation, with a yaw compensation so the jaws meet the
 # plate SQUARE on its sides.
@@ -216,6 +258,13 @@ PAD_OFFSET_FROM_TCP = 0.069   # m, in gripper +Z direction
 # below the pads when the plate is attached. This matches a typical lab
 # pick-and-place where the gripper grabs the plate by its top rim.
 GRIP_DEPTH = 0.012   # m, height of pad contact on plate
+# ── GRIP BAND: the FLAT BASE BODY of the rack, never the vial cylinders ──
+# Measured flat-body tops: 20ml/sd ~30mm, 8ml ~45mm above the plate bottom.
+# Vials protrude above the flat body — gripping there would crush them.
+# Pads center 24mm above the bottom: inside the flat band on ALL types,
+# above the vortex nest collar (19mm) and the stand rails (15.5mm).
+# This makes the grasp height TYPE-INDEPENDENT.
+GRIP_CENTER_ABOVE_BOTTOM = 0.024
 
 # === DERIVED OFFSETS ===
 # Legacy BOX derivation (center-origin box, kept for reference):
@@ -227,27 +276,10 @@ PLATE_CENTER_BELOW_TCP = PAD_OFFSET_FROM_TCP - GRIP_DEPTH / 2.0 + PLATE_Y / 2.0
 
 
 def plate_bottom_below_tcp(height=None):
-    """Gripper-frame +Z offset of the attached plate MESH origin (= plate
-    BOTTOM center) below the TCP, for a rack of the given height.
-
-    Derivation (from the legacy box math, converted to a bottom-center
-    origin):
-      - Pads grip the TOP `GRIP_DEPTH` (12 mm) of the rack, so the plate TOP
-        sits half a grip depth ABOVE the pad center:
-          plate_top_below_tcp   = PAD_OFFSET_FROM_TCP - GRIP_DEPTH/2
-      - The box used a CENTER origin, so it added height/2:
-          plate_center_below_tcp = plate_top_below_tcp + height/2
-      - The mesh origin is at the BOTTOM center — a further height/2 down
-        (in gripper +Z, since mesh +Y points along gripper -Z via ATTACH_Q):
-          plate_bottom_below_tcp = plate_top_below_tcp + height
-                                 = PAD_OFFSET_FROM_TCP - GRIP_DEPTH/2 + height
-      i.e. the plate bottom hangs (height - GRIP_DEPTH/2) below the pad
-      center: everything except the gripped top 12 mm hangs below the pads.
-    For sd (height 0.077): 0.069 - 0.006 + 0.077 = 0.140 m.
-    """
-    if height is None:
-        height = PLATE_HEIGHT
-    return PAD_OFFSET_FROM_TCP - GRIP_DEPTH / 2.0 + height
+    """Nominal plate-bottom hang below the TCP for the FLAT-BODY grip:
+    pads at TCP+PAD_OFFSET grab GRIP_CENTER_ABOVE_BOTTOM above the bottom,
+    so bottom = TCP + PAD_OFFSET + GRIP_CENTER (rack height irrelevant)."""
+    return PAD_OFFSET_FROM_TCP + GRIP_CENTER_ABOVE_BOTTOM
 
 # "Home" / "ready" joint config — wrist values (j4, j5, j6) chosen to match
 # the IK family MoveIt picks for typical pick/place poses. That keeps the
@@ -288,10 +320,14 @@ MAX_JOINT_DELTA           = 0.1   # rad — max single-step delta between waypoi
 #   TCP_world_Z = pad_center + PAD_OFFSET_FROM_TCP
 # For sd (height 0.077): (0.077 - 0.006) + 0.069 = 0.140 m above the deck dot.
 def default_grasp_offset(height=None):
-    """TCP height above the deck dot at grasp/place for a rack of `height`."""
-    if height is None:
-        height = PLATE_HEIGHT
-    return (height - GRIP_DEPTH / 2.0) + PAD_OFFSET_FROM_TCP
+    """TCP height above the deck dot at grasp/place.
+
+    FLAT-BODY GRIP: pads pinch the rack's flat base at
+    GRIP_CENTER_ABOVE_BOTTOM — NOT the top (vials live there). The offset is
+    therefore independent of rack height:
+        TCP = rest_float + grip_center + PAD_OFFSET_FROM_TCP.
+    (REST_FLOAT is added by the caller via the deck rest pose.)"""
+    return GRIP_CENTER_ABOVE_BOTTOM + PAD_OFFSET_FROM_TCP
 
 
 # Legacy constant computed from the old 25 mm box [unused — the CLI default
@@ -318,15 +354,26 @@ ARM_LINKS = [
 # the instrument/decks it rests on, and the table/stand. NOT the arm links —
 # the plate sweeping into the forearm/wrist mid-carry is a real self-collision
 # (lesson from the pxrd cell, doubly critical carrying open vials).
-DEFAULT_TOUCH_LINKS = GRIPPER_LINKS + [
-    "unchained_junior", "pedestal",
+# Plate-touchable gripper links: FINGERS ONLY. The plate mesh includes the
+# vial cylinders; whitelisting the whole gripper would mask the palm or
+# knuckles brushing vial tops (user safety requirement: grip the flat base
+# without the gripper ever hitting the long vials).
+PLATE_TOUCH_GRIPPER_LINKS = [
+    "gripper_finger1_finger_tip_link", "gripper_finger2_finger_tip_link",
+    "gripper_finger1_finger_link", "gripper_finger2_finger_link",
+]
+DEFAULT_TOUCH_LINKS = PLATE_TOUCH_GRIPPER_LINKS + [
+    # deck markers only (visual-only links, no collision geometry anyway).
+    # Structural surfaces the plate legitimately RESTS on (unchained_junior,
+    # plate_stand, table) are whitelisted per-attach via extra_touch in
+    # attach_plate_to_deck — NOT here: a blanket instrument whitelist masked
+    # a 90-deg-wrong placement overlapping the deck divider (2026-09-23).
     "deck_9_10_pos1", "deck_9_10_pos2", "deck_9_10_pos3",
     "deck_vortex_pos1", "deck_vortex_pos2", "deck_vortex_pos3",
     "deck_vacuum_filtration",
-    "stand_pos1", "stand_pos2", "stand_pos3",
-    "stand_pos4", "stand_pos5", "stand_pos6",
-    "plate_stand",
-    "table", "table_top",  # external lab table (loading station)
+    "stand_pos1", "stand_pos2", "stand_pos3", "stand_pos4",
+    "stand_pos5", "stand_pos6", "stand_pos7", "stand_pos8",
+    "table_top",
 ]
 
 
@@ -818,11 +865,11 @@ def spawn_obstacle_plates(node, scene_client, deck_names):
         co.header.frame_id = deck
         co.id = obstacle_id
         # Type-parameterized rack MESH (same loader/type as the carried
-        # plate). Mesh origin = bottom center, deck frames are Y-up, so
-        # y = 0 puts the rack bottom flush on the deck marker.
+        # plate). Mesh origin = bottom center, deck frames are Y-up; float
+        # by the per-deck rest float like the live plate.
         co.meshes.append(_load_plate_mesh())
         p = Pose()
-        p.position.y = 0.0
+        p.position.y = rest_float_for(deck)
         p.orientation = Quaternion(w=1.0)
         co.mesh_poses.append(p)
         co.operation = CollisionObject.ADD
@@ -857,8 +904,8 @@ ALL_DECKS = [
     "deck_9_10_pos1", "deck_9_10_pos2", "deck_9_10_pos3",
     "deck_vortex_pos1", "deck_vortex_pos2", "deck_vortex_pos3",
     "deck_vacuum_filtration",
-    "stand_pos1", "stand_pos2", "stand_pos3",
-    "stand_pos4", "stand_pos5", "stand_pos6",
+    "stand_pos1", "stand_pos2", "stand_pos3", "stand_pos4",
+    "stand_pos5", "stand_pos6", "stand_pos7", "stand_pos8",
     "table_top",
 ]
 
@@ -899,7 +946,8 @@ def purge_plate(node, scene_client):
     return True
 
 
-def _attach_plate(node, scene_client, link_name, pose, current_parent=None):
+def _attach_plate(node, scene_client, link_name, pose, current_parent=None,
+                  extra_touch=None):
     """Attach the plate to `link_name` with the given pose-in-link.
     If `current_parent` is given, first detach from there.
 
@@ -928,12 +976,22 @@ def _attach_plate(node, scene_client, link_name, pose, current_parent=None):
     aco.object.meshes.append(_load_plate_mesh())
     aco.object.mesh_poses.append(pose)
     aco.object.operation = CollisionObject.ADD
-    aco.touch_links = DEFAULT_TOUCH_LINKS + [link_name]
+    aco.touch_links = DEFAULT_TOUCH_LINKS + [link_name] + (extra_touch or [])
 
     ps = PlanningScene(); ps.is_diff = True
     ps.robot_state.is_diff = True
     ps.robot_state.attached_collision_objects.append(aco)
     return _apply_scene(node, scene_client, ps)
+
+
+def _deck_rest_touch(deck_name):
+    """Structural links the plate legitimately contacts while RESTING on this
+    deck — whitelisted only for the deck attach, never for the carry."""
+    if deck_name.startswith("stand_pos"):
+        return ["plate_stand", "table", "table_top"]
+    if deck_name == "table_top":
+        return ["table"]
+    return ["unchained_junior"]     # instrument decks: plate sits in its nest
 
 
 def attach_plate_to_deck(node, scene_client, deck_name, current_parent=None):
@@ -944,24 +1002,99 @@ def attach_plate_to_deck(node, scene_client, deck_name, current_parent=None):
     with y = 0 in the deck frame.
     """
     pose = Pose()
-    pose.position.y = 0.0                   # mesh origin = bottom center
+    # Per-deck float: nests keep the measured 5mm stand-off; stand/table
+    # seat flush (0.5mm — visually touching, keeps FCL out of the
+    # ambiguous zero-gap case at the grasp instant).
+    pose.position.y = rest_float_for(deck_name)
     pose.orientation = Quaternion(w=1.0)
-    return _attach_plate(node, scene_client, deck_name, pose, current_parent)
+    return _attach_plate(node, scene_client, deck_name, pose, current_parent,
+                         extra_touch=_deck_rest_touch(deck_name))
 
 
-def attach_plate_to_gripper(node, scene_client, current_parent):
-    """Attach plate to gripper_grasp_link with the proper grasp orientation.
+import numpy as _np
 
-    Pads grip the TOP GRIP_DEPTH (12 mm) of the rack; the rest hangs below.
-    With the mesh origin at the BOTTOM center, the attach z offset in the
-    gripper frame is plate_bottom_below_tcp(PLATE_HEIGHT)
-      = PAD_OFFSET_FROM_TCP - GRIP_DEPTH/2 + height
-    (see the derivation in plate_bottom_below_tcp — the plate bottom hangs
-    `height - GRIP_DEPTH/2` below the pad center).
+
+def _quat_to_R(q):
+    x, y, z, w = q.x, q.y, q.z, q.w
+    n = math.sqrt(x*x + y*y + z*z + w*w) or 1.0
+    x, y, z, w = x/n, y/n, z/n, w/n
+    return _np.array([
+        [1-2*(y*y+z*z),   2*(x*y-z*w),   2*(x*z+y*w)],
+        [2*(x*y+z*w),   1-2*(x*x+z*z),   2*(y*z-x*w)],
+        [2*(x*z-y*w),     2*(y*z+x*w), 1-2*(x*x+y*y)],
+    ])
+
+
+def _R_to_quat(R):
+    t = _np.trace(R)
+    if t > 0:
+        s = math.sqrt(t + 1.0) * 2
+        w = 0.25 * s
+        x = (R[2, 1] - R[1, 2]) / s
+        y = (R[0, 2] - R[2, 0]) / s
+        z = (R[1, 0] - R[0, 1]) / s
+    else:
+        i = int(_np.argmax([R[0, 0], R[1, 1], R[2, 2]]))
+        if i == 0:
+            s = math.sqrt(1.0 + R[0, 0] - R[1, 1] - R[2, 2]) * 2
+            w = (R[2, 1] - R[1, 2]) / s; x = 0.25 * s
+            y = (R[0, 1] + R[1, 0]) / s; z = (R[0, 2] + R[2, 0]) / s
+        elif i == 1:
+            s = math.sqrt(1.0 + R[1, 1] - R[0, 0] - R[2, 2]) * 2
+            w = (R[0, 2] - R[2, 0]) / s; x = (R[0, 1] + R[1, 0]) / s
+            y = 0.25 * s; z = (R[1, 2] + R[2, 1]) / s
+        else:
+            s = math.sqrt(1.0 + R[2, 2] - R[0, 0] - R[1, 1]) * 2
+            w = (R[1, 0] - R[0, 1]) / s; x = (R[0, 2] + R[2, 0]) / s
+            y = (R[1, 2] + R[2, 1]) / s; z = 0.25 * s
+    return Quaternion(x=float(x), y=float(y), z=float(z), w=float(w))
+
+
+def _tf_to_T(tf):
+    M = _np.eye(4)
+    M[:3, :3] = _quat_to_R(tf.transform.rotation)
+    M[:3, 3] = [tf.transform.translation.x,
+                tf.transform.translation.y,
+                tf.transform.translation.z]
+    return M
+
+
+def attach_plate_to_gripper(node, scene_client, current_parent, buf=None,
+                            source_deck=None):
+    """Attach the plate to gripper_grasp_link as a RIGID grasp (pxrd pattern).
+
+    Instead of a hand-derived fixed pose (which silently desyncs whenever the
+    mesh axis convention changes — exactly what happened when the wp meshes
+    were rotated to the deck convention), read the ACTUAL TF at grasp time:
+    the plate rests on `source_deck` at the rest pose, so
+        plate_in_gripper = inv(T(base<-gripper)) @ T(base<-deck) @ T(rest).
+    The plate stays exactly where it physically is.
     """
+    if buf is not None and source_deck is not None:
+        T_grip = _tf_to_T(lookup_tf(node, buf, "base_link", "gripper_grasp_link"))
+        T_deck = _tf_to_T(lookup_tf(node, buf, "base_link", source_deck))
+        T_rest = _np.eye(4); T_rest[1, 3] = rest_float_for(source_deck)
+        T_pg = _np.linalg.inv(T_grip) @ T_deck @ T_rest
+        pose = Pose()
+        pose.position.x, pose.position.y, pose.position.z = T_pg[:3, 3]
+        pose.orientation = _R_to_quat(T_pg[:3, :3])
+        # Record the MEASURED hang: plate origin (bottom center) distance
+        # below the TCP along gripper +Z. The place descend must target
+        # deck + THIS + float — targeting the nominal grasp_offset drives
+        # the plate pick_lift-deep into the nest floor (the old snap-attach
+        # silently hid exactly this).
+        global HELD_BOTTOM_BELOW_TCP, HELD_R_PG
+        HELD_BOTTOM_BELOW_TCP = float(T_pg[2, 3])
+        HELD_R_PG = T_pg[:3, :3].copy()
+        node.get_logger().info(
+            f"   rigid hold: plate bottom {HELD_BOTTOM_BELOW_TCP*1000:.1f}mm "
+            f"below TCP (nominal {plate_bottom_below_tcp(PLATE_HEIGHT)*1000:.1f}mm)")
+        return _attach_plate(node, scene_client, "gripper_grasp_link", pose,
+                             current_parent)
+    # legacy fallback (fixed pose — only used if TF unavailable)
     pose = Pose()
     pose.position.z = plate_bottom_below_tcp(PLATE_HEIGHT)
-    pose.orientation = ATTACH_Q     # mesh +Y (rack up) = gripper -Z
+    pose.orientation = ATTACH_Q
     return _attach_plate(
         node, scene_client, "gripper_grasp_link", pose, current_parent)
 
@@ -1158,7 +1291,7 @@ def main():
                         "puts the gripper pads on the top 12 mm of the rack, "
                         "with the rest hanging below. Tune PAD_OFFSET_FROM_TCP "
                         "in pick_place.py if the pads don't visually align.")
-    p.add_argument("--pick-lift", type=float, default=0.020,
+    p.add_argument("--pick-lift", type=float, default=0.004,
                    help="Extra height (m) added to --grasp-offset for the DECK "
                         "PICK only (not the table place). Raises where the gripper "
                         "closes so the fingertips don't bottom out on the deck. "
@@ -1417,17 +1550,54 @@ def main():
     node.get_logger().info(f"Source deck in base_link: ({sx:+.3f}, {sy:+.3f}, {sz:+.3f})")
     node.get_logger().info(f"Target deck in base_link: ({tx:+.3f}, {ty:+.3f}, {tz:+.3f})")
 
-    # ============================================================
-    # PHASE: open gripper  (OMPL joint goal; trivial)
-    # ============================================================
-    if args.no_gripper:
-        node.get_logger().warning(
-            "--no-gripper: SKIPPING 'open gripper' phase (hardware arm-only)")
-    else:
-        if not _run_phase(node, phases, "open gripper", "OMPL",
-                          lambda: plan_gripper(node, mg, GRIPPER_OPEN),
-                          target_joint=GRIPPER_OPEN):
-            fail("open gripper failed")
+    # ── GRASP WIDTH — AUTO PER DECK (2026-09-24). The jaw yaw is fixed
+    # (DOWN_Q), but decks orient the plate differently: at the stand the
+    # jaws straddle the LONG axis (127.9mm), at the vortex nest the SHORT
+    # axis (85.5mm). Closing to the wrong width either grips air or drives
+    # the pads THROUGH the plate (invisible: pad<->plate is whitelisted for
+    # the grasp) with the knuckles into the vial tops. So: project the pad
+    # axis onto the source marker's axes and close to that span + 0.6mm.
+    # An explicit --grip-mm / non-default --grip-value still overrides.
+    grasp_q = DOWN_Q
+    _pad_axis = _quat_to_R(grasp_q)[:, 0]         # pad-separation axis
+    _Rsrc = _quat_to_R(src_tf.transform.rotation)
+    _along_long = abs(float(_pad_axis @ _Rsrc[:, 2]))   # marker Z = long axis
+    _along_short = abs(float(_pad_axis @ _Rsrc[:, 0]))  # marker X = short axis
+    _span = PLATE_FOOT_X if _along_long >= _along_short else PLATE_FOOT_Z
+    auto_grip_mm = _span * 1000.0 + 0.6
+    if args.grip_mm is None and args.grip_value == -0.64:
+        args.grip_value = grip_mm_to_joint(auto_grip_mm)
+        node.get_logger().info(
+            f"grip width AUTO: jaws across the "
+            f"{'LONG' if _span == PLATE_FOOT_X else 'SHORT'} axis at "
+            f"{args.source} -> {auto_grip_mm:.1f}mm "
+            f"(grip-value {args.grip_value:+.3f})")
+
+    # ── PLACE ORIENTATION — MEASURED, never hand-derived. The rigid attach
+    # records R_pg (plate-in-gripper). For the plate to land aligned with the
+    # target deck frame: R_gripper_place = R_target_deck @ R_pg^T.
+    # (Hand-derived frame deltas were wrong twice — Y-up pitch-slot
+    # handedness. Measured matrices cannot be.) Computed lazily after the
+    # grasp; before it, fall back to DOWN_Q (only pick phases use it).
+    _R_tgt = _quat_to_R(tgt_tf.transform.rotation)
+    place_q = None  # resolved post-grasp via _resolve_place_q()
+
+    def _resolve_place_q():
+        nonlocal place_q
+        if place_q is not None:
+            return place_q
+        if HELD_R_PG is not None:
+            _Rg = _R_tgt @ HELD_R_PG.T
+            place_q = _R_to_quat(_Rg)
+            node.get_logger().info("place orientation: computed from measured hold")
+        else:
+            place_q = DOWN_Q
+            node.get_logger().warning("place orientation: fallback DOWN_Q (no measured hold)")
+        return place_q
+
+
+    def _is_instrument_deck(d):
+        return not (d.startswith("stand_pos") or d == "table_top")
 
     # ============================================================
     # PHASE: approach above source  (OMPL — free-space routing)
@@ -1437,7 +1607,7 @@ def main():
                           node, mg, ik_client, get_scene_client,
                           "base_link", "gripper_grasp_link",
                           sx, sy, sz + args.hover,
-                          DOWN_Q, vel=args.vel,
+                          grasp_q, vel=args.vel,
                           planning_time=args.planning_time,
                           planner_id=args.planner,
                           planning_attempts=args.num_attempts,
@@ -1450,6 +1620,22 @@ def main():
         fail("approach failed")
 
     # ============================================================
+    # PHASE: open gripper AT THE HOVER (visible over the rack;
+    # jaws open only here — never swung wide through the cell)
+    # ============================================================
+    if args.no_gripper:
+        node.get_logger().warning(
+            "--no-gripper: SKIPPING 'open gripper' phase (hardware arm-only)")
+    else:
+        if not _run_phase(node, phases, "open gripper", "OMPL",
+                          lambda: plan_gripper(node, mg, GRIPPER_OPEN),
+                          target_joint=GRIPPER_OPEN):
+            fail("open gripper failed")
+
+    if _is_instrument_deck(args.source):
+        set_nest_window(node, get_scene_client, scene_client, True)
+
+    # ============================================================
     # PHASE: descend to grasp  (Cartesian — straight vertical)
     # ============================================================
     if not _run_phase(node, phases, f"descend to grasp at {args.source}", "Cartesian",
@@ -1457,7 +1643,7 @@ def main():
                           node, cart_client, exec_client,
                           "base_link", "gripper_grasp_link",
                           sx, sy, sz + pick_offset,
-                          DOWN_Q, vel=args.vel, max_step=0.005),
+                          grasp_q, vel=args.vel, max_step=0.005),
                       from_z=f"{sz+args.hover:+.3f}",
                       to_z=f"{sz+pick_offset:+.3f}",
                       pick_lift=f"+{args.pick_lift*1000:.0f}mm above place height",
@@ -1482,7 +1668,8 @@ def main():
     if not args.no_plate:
         if not _run_phase(node, phases, "attach plate to gripper", "scene-diff",
                           lambda: (attach_plate_to_gripper(
-                              node, scene_client, plate_parent), "ok"),
+                              node, scene_client, plate_parent,
+                              buf=buf, source_deck=args.source), "ok"),
                           from_parent=plate_parent,
                           to_parent="gripper_grasp_link"):
             fail("attach-to-gripper failed")
@@ -1496,11 +1683,14 @@ def main():
                           node, cart_client, exec_client,
                           "base_link", "gripper_grasp_link",
                           sx, sy, sz + args.hover,
-                          DOWN_Q, vel=args.vel, max_step=0.005),
+                          grasp_q, vel=args.vel, max_step=0.005),
                       from_z=f"{sz+pick_offset:+.3f}",
                       to_z=f"{sz+args.hover:+.3f}",
                       max_step="5 mm"):
         fail("lift failed")
+
+    if _is_instrument_deck(args.source):
+        set_nest_window(node, get_scene_client, scene_client, False)
 
     # ============================================================
     # PHASE: via-point at home  (with plate held)
@@ -1526,7 +1716,7 @@ def main():
                           planner_id=args.planner,
                           exec_client=exec_client,
                           keep_orientation_along_path=args.keep_plate_flat,
-                          orient_q=DOWN_Q, base_frame="base_link",
+                          orient_q=grasp_q, base_frame="base_link",
                           link="gripper_grasp_link",
                           path_tilt_tol=args.path_tilt_tol),
                       via=("home: " + ", ".join(
@@ -1547,7 +1737,7 @@ def main():
                           node, mg, ik_client, get_scene_client,
                           "base_link", "gripper_grasp_link",
                           tx, ty, tz + args.hover,
-                          DOWN_Q, vel=args.vel,
+                          _resolve_place_q(), vel=args.vel,
                           planning_time=args.transit_time,
                           planner_id=args.planner,
                           planning_attempts=args.num_attempts,
@@ -1565,6 +1755,19 @@ def main():
                              f"≤{MAX_SINGLE_JOINT_TRAVEL:.1f}rad per joint"):
         fail("transit failed")
 
+    # The descend target must put the PLATE BOTTOM at deck + per-deck float
+    # using the MEASURED hold from the rigid attach (the plate hangs
+    # pick_lift lower than nominal because the jaws closed pick_lift high).
+    place_hang = (HELD_BOTTOM_BELOW_TCP if HELD_BOTTOM_BELOW_TCP is not None
+                  else args.grasp_offset + args.pick_lift)
+    place_float = rest_float_for(args.target)
+    node.get_logger().info(
+        f"place height: deck + {place_hang*1000:.1f}mm (measured hold) "
+        f"+ {place_float*1000:.1f}mm float")
+
+    if _is_instrument_deck(args.target):
+        set_nest_window(node, get_scene_client, scene_client, True)
+
     # ============================================================
     # PHASE: descend to place  (Cartesian — straight vertical)
     # ============================================================
@@ -1572,8 +1775,8 @@ def main():
                       lambda: cartesian_move(
                           node, cart_client, exec_client,
                           "base_link", "gripper_grasp_link",
-                          tx, ty, tz + args.grasp_offset,
-                          DOWN_Q, vel=args.vel, max_step=0.005),
+                          tx, ty, tz + place_hang + place_float,
+                          _resolve_place_q(), vel=args.vel, max_step=0.005),
                       from_z=f"{tz+args.hover:+.3f}",
                       to_z=f"{tz+args.grasp_offset:+.3f}",
                       max_step="5 mm"):
@@ -1586,8 +1789,8 @@ def main():
                       lambda: cartesian_move(
                           node, cart_client, exec_client,
                           "base_link", "gripper_grasp_link",
-                          tx, ty, tz + args.grasp_offset + args.pre_release_lift,
-                          DOWN_Q, vel=args.vel, max_step=0.005),
+                          tx, ty, tz + place_hang + place_float + args.pre_release_lift,
+                          _resolve_place_q(), vel=args.vel, max_step=0.005),
                       from_z=f"{tz+args.grasp_offset:+.3f}",
                       to_z=f"{tz+args.grasp_offset+args.pre_release_lift:+.3f}",
                       max_step="5 mm"):
@@ -1626,11 +1829,14 @@ def main():
                           node, cart_client, exec_client,
                           "base_link", "gripper_grasp_link",
                           tx, ty, tz + args.hover,
-                          DOWN_Q, vel=args.vel, max_step=0.005),
+                          _resolve_place_q(), vel=args.vel, max_step=0.005),
                       from_z=f"{tz+args.grasp_offset:+.3f}",
                       to_z=f"{tz+args.hover:+.3f}",
                       max_step="5 mm"):
         fail("retreat failed")
+
+    if _is_instrument_deck(args.target):
+        set_nest_window(node, get_scene_client, scene_client, False)
 
     _print_summary(node, phases)
     node.get_logger().info("DONE")
@@ -1639,3 +1845,62 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# ════════════════════════════════════════════════════════════════
+# NEST INSERTION WINDOW — scoped finger-vs-instrument permission.
+# The flat-body grip (vial safety) necessarily puts the fingertips inside
+# the instrument nest collar during the final descend. Real nests accept
+# the blades (hardware-proven, June 2026); the scan models the collar as
+# solid. Allow ONLY gripper finger links vs the instrument, ONLY while the
+# insertion window is open (final place/pick descend at instrument decks),
+# and restore immediately after. Plate & arm stay fully checked; stand and
+# table decks never use this (they pass fully strict).
+# ════════════════════════════════════════════════════════════════
+_NEST_WINDOW_LINKS = [
+    "gripper_finger1_finger_tip_link", "gripper_finger2_finger_tip_link",
+    "gripper_finger1_finger_link", "gripper_finger2_finger_link",
+]
+
+
+def set_nest_window(node, get_scene_client, apply_scene_client, allow):
+    """Open/close the insertion window via an ACM diff."""
+    from moveit_msgs.msg import PlanningScene as PS
+    from moveit_msgs.msg import PlanningSceneComponents as PSC
+    from moveit_msgs.srv import GetPlanningScene
+    req = GetPlanningScene.Request()
+    req.components.components = PSC.ALLOWED_COLLISION_MATRIX
+    fut = get_scene_client.call_async(req)
+    deadline = time.time() + 5.0
+    while not fut.done() and time.time() < deadline:
+        time.sleep(0.01)
+    if not fut.done() or fut.result() is None:
+        node.get_logger().warning("nest window: could not fetch ACM")
+        return False
+    acm = fut.result().scene.allowed_collision_matrix
+    names = list(acm.entry_names)
+    for n in _NEST_WINDOW_LINKS + ["unchained_junior"]:
+        if n not in names:
+            names.append(n)
+            for row in acm.entry_values:
+                row.enabled.append(False)
+            from moveit_msgs.msg import AllowedCollisionEntry
+            new_row = AllowedCollisionEntry()
+            new_row.enabled = [False] * len(names)
+            acm.entry_values.append(new_row)
+    # pad rows to square (defensive)
+    for row in acm.entry_values:
+        while len(row.enabled) < len(names):
+            row.enabled.append(False)
+    ui = names.index("unchained_junior")
+    for link in _NEST_WINDOW_LINKS:
+        li = names.index(link)
+        acm.entry_values[li].enabled[ui] = allow
+        acm.entry_values[ui].enabled[li] = allow
+    acm.entry_names = names
+    ps = PS(); ps.is_diff = True
+    ps.allowed_collision_matrix = acm
+    ok = _apply_scene(node, apply_scene_client, ps)
+    node.get_logger().info(
+        f"   nest insertion window: {'OPEN (fingers-vs-instrument allowed)' if allow else 'closed (strict)'}")
+    return ok

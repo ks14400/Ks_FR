@@ -40,6 +40,7 @@ setup(
             'diagnose_descent = unchained_cell.diagnose_descent:main',
             'check_state = unchained_cell.check_state:main',
             'go_home = unchained_cell.go_home:main',
+            'mimic_repeater = unchained_cell.mimic_repeater:main',
             'stop = unchained_cell.stop:main',
             'purge_scene = unchained_cell.purge_scene:main',
         ],

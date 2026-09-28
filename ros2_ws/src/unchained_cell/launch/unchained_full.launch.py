@@ -50,6 +50,7 @@ def launch_setup(context, *args, **kwargs):
     stand_z = LaunchConfiguration("stand_z").perform(context)
     stand_yaw_deg = LaunchConfiguration("stand_yaw_deg").perform(context)
     include_stand_plates = LaunchConfiguration("include_stand_plates").perform(context)
+    stand_plate_mesh = LaunchConfiguration("stand_plate_mesh").perform(context)
 
     robot_num = robot_model[2:]
     moveit_pkg = f"fairino{robot_num}_v6_moveit2_config"
@@ -84,6 +85,7 @@ def launch_setup(context, *args, **kwargs):
                 "stand_z": stand_z,
                 "stand_yaw_deg": stand_yaw_deg,
                 "include_stand_plates": include_stand_plates,
+                "stand_plate_mesh": stand_plate_mesh,
                 # Override the upstream all-zeros initial_positions with our
                 # ready pose so the arm comes up folded, not extended.
                 "initial_positions_file":
@@ -117,6 +119,16 @@ def launch_setup(context, *args, **kwargs):
                 ompl_cfg[grp]["longest_valid_segment_fraction"] = 0.002
     except Exception:
         pass  # never let a config tweak break the launch
+
+    # ── gripper mimic repeater: publishes the AG-145's mimic joints so
+    # rviz renders the TRUE gripper (controllers publish only finger1;
+    # unpublished mimics froze the display half-open regardless of state) ──
+    mimic_repeater = Node(
+        package="unchained_cell",
+        executable="mimic_repeater",
+        name="gripper_mimic_repeater",
+        output="log",
+    )
 
     # ── robot_state_publisher ──
     rsp = Node(
@@ -220,6 +232,7 @@ def launch_setup(context, *args, **kwargs):
     )
 
     nodes = [
+        mimic_repeater,
         static_tf,
         rsp,
         ros2_control_node,
@@ -293,15 +306,15 @@ def generate_launch_description():
                               description="Robot mount Z offset in pedestal frame (m)"),
         DeclareLaunchArgument("include_table", default_value="true",
                               description="Include the lab loading table in the scene"),
-        DeclareLaunchArgument("table_x", default_value="-0.3",
+        DeclareLaunchArgument("table_x", default_value="-0.4",
                               description="Table X position in world (m)"),
         DeclareLaunchArgument("table_y", default_value="-1.7",
                               description="Table Y position in world (m)"),
         DeclareLaunchArgument("table_z", default_value="0.0",
                               description="Table Z position in world (m); top of table is at this + table_h"),
-        DeclareLaunchArgument("table_w", default_value="0.6",
+        DeclareLaunchArgument("table_w", default_value="0.4",
                               description="Table width (X dimension, m)"),
-        DeclareLaunchArgument("table_d", default_value="0.6",
+        DeclareLaunchArgument("table_d", default_value="0.55",
                               description="Table depth (Y dimension, m)"),
         DeclareLaunchArgument("table_h", default_value="0.75",
                               description="Table height (Z dimension, m)"),
@@ -316,6 +329,8 @@ def generate_launch_description():
                               description="Plate stand yaw about vertical axis (deg); "
                                           "applied in the pitch slot of the Y-up "
                                           "table_top frame"),
+        DeclareLaunchArgument("stand_plate_mesh", default_value="wp_8ml",
+                              description="Rack mesh shown at the stand markers: wp_8ml/wp_20ml/wp_sd."),
         DeclareLaunchArgument("include_stand_plates", default_value="false",
                               description="Spawn static wp_sd.stl plates at the 6 stand "
                                           "markers for layout eyeballing"),
