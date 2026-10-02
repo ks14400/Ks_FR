@@ -149,19 +149,30 @@
   <xacro:property name="stand_yaw_rad" value="${float(stand_yaw_deg_prop) * pi / 180.0}"/>
 
   <xacro:if value="${'$(arg include_table)' == 'true'}">
-    <xacro:property name="tw" value="$(arg table_w)"/>
-    <xacro:property name="td" value="$(arg table_d)"/>
-    <xacro:property name="th" value="$(arg table_h)"/>
+    <!-- Real table assembly (cad/unchained/table_asm.STL, 2026-10-02):
+         550 x 400 frame on casters, converted so the link origin is at the
+         FLOOR under the table center, long (550) side along world Y (same
+         orientation as the old 400x550 box). TABLETOP PLANE = +0.7762m
+         (casters 20.2mm + frame; perimeter bolt heads rise to 779.8mm but
+         sit ~22mm in from the edges, OUTSIDE the centered holder footprint).
+         table_w/d/h launch args no longer shape the geometry. -->
+    <xacro:property name="table_top_z" value="0.7762"/>
 
     <link name="table">
       <visual>
-        <origin xyz="0 0 ${th/2}" rpy="0 0 0"/>
-        <geometry><box size="${tw} ${td} ${th}"/></geometry>
-        <material name="wood"><color rgba="0.55 0.35 0.18 1.0"/></material>
+        <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
+        <geometry>
+          <mesh filename="package://unchained_cell/meshes/table_visual.stl"
+                scale="0.001 0.001 0.001"/>
+        </geometry>
+        <material name="table_alu"><color rgba="0.62 0.62 0.66 1.0"/></material>
       </visual>
       <collision>
-        <origin xyz="0 0 ${th/2}" rpy="0 0 0"/>
-        <geometry><box size="${tw} ${td} ${th}"/></geometry>
+        <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
+        <geometry>
+          <mesh filename="package://unchained_cell/meshes/table_collision.stl"
+                scale="0.001 0.001 0.001"/>
+        </geometry>
       </collision>
       <inertial>
         <mass value="20.0"/>
@@ -185,9 +196,9 @@
     <joint name="table_top_joint" type="fixed">
       <parent link="table"/>
       <child link="table_top"/>
-      <!-- xyz: at top-center of table. rpy="π/2 0 0" rotates so table_top
-           local +Y points along world +Z (up). -->
-      <origin xyz="0 0 ${th}" rpy="1.5708 0 0"/>
+      <!-- xyz: at the TABLETOP PLANE of the mesh. rpy="π/2 0 0" rotates so
+           table_top local +Y points along world +Z (up). -->
+      <origin xyz="0 0 ${table_top_z}" rpy="1.5708 0 0"/>
     </joint>
 
     <!-- ================ Plate stand on the table ================
