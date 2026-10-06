@@ -91,6 +91,35 @@ plan exceeds the 6-rad budget gate; recover with
 `ros2 run unchained_cell go_home` (and if that's budget-blocked, purge the
 plate first / use the escape scripts pattern from docs).
 
+## Real table + physical setup numbers (2026-10-02..06)
+
+Box stand-in replaced by the real table assembly
+(`cad/unchained/table_asm.STL` → `meshes/table_visual/collision.stl`):
+550×400 frame on casters, long side along world Y, same world position
+(−0.4, −1.7). **Tabletop plane = 776.2mm** above floor (was 750 box);
+table_top frame moved, holder + markers follow. Perimeter bolt heads
+(+3.6mm, ~22mm in from edges) are in collision but clear the centered
+holder footprint. **20ml re-validated from ALL 8 pockets → vortex pos1
+against this table: 8/8 PASS.**
+
+For the physical build (SolidWorks assembly, Y-up, mm, axes parallel —
+derived from the sim joints + mesh conversion offsets, cross-checked in
+rviz with origin markers):
+
+- Unchained scan (`Top Level Assy AIMATX Q126_strip`) origin → pedestal
+  part (`vention_pedestal_585mm`) origin: **(ΔX +465.5, ΔY +28.3,
+  ΔZ +157.3)**, straight-line 492.2. Pedestal part origin = its TOP plane.
+- Robot flange center on pedestal top: (−113.0, 0, +392.0) from pedestal
+  origin, arm yawed **−45°** about vertical.
+- Heights above floor: scan origin **916.7**, pedestal top / robot base
+  plane **945.0**, tabletop **776.2**, scan's lowest point **588.0**
+  (bottom pad at scan coords (410.7, −328.6, −80.3)).
+- **User confirmed the real machine's lowest point = 588mm** →
+  `device_height = 0.629675` is correct as-built; height chain validated.
+- Sim pedestal column runs 945 floor-to-top (585 source + 360 extension):
+  the bare 585mm Vention column needs a 360mm base/riser, or adjust
+  `device_height` + re-run the matrix if the as-built differs.
+
 ## Open items (in priority order)
 
 1. **sd rack** round trip (grip_center 19mm set but never run with new grip).

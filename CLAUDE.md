@@ -12,8 +12,8 @@ simulation and on real hardware (switch = launch args, not code):
 
 | Cell | Robot | Instrument | Status |
 |---|---|---|---|
-| **unchained** (`unchained_cell`) | FR16 + DH AG-145 gripper | Unchained Junior (open decks) | **Hardware-proven** — full pick-and-place incl. real gripper |
-| **pxrd** (`pxrd_cell`) | FR10 + DH AG-145 gripper | Rigaku SmartLab PXRD (enclosed bay) | **Sim-validated round trip** — hardware bring-up pending |
+| **unchained** (`unchained_cell`) | FR16 + DH AG-145 gripper | Unchained Junior (open decks) | **Refit sim-validated** (2026-10): vial racks on 8-pocket holder + real table; 8ml/20ml round trips + all-8-pocket matrix pass strict checking. Pre-refit cell was hardware-proven; refit hardware bring-up in progress — see [docs/unchained-refit-handoff.md](docs/unchained-refit-handoff.md) |
+| **pxrd** (`pxrd_cell`) | FR10 + DH AG-145 gripper | Rigaku SmartLab PXRD (enclosed bay) | **Sim-validated round trip** — hardware bring-up pending. CAUTION: validated under the old mirrored gripper model; re-validate grips |
 
 Everything lives in one colcon workspace: `ros2_ws/`.
 
@@ -28,7 +28,10 @@ Everything lives in one colcon workspace: `ros2_ws/`.
 
 # Unchained cell (domain 42):
 ./run_unchained.sh sim                              # sim + rviz
-./run_unchained.sh pick deck_9_10_pos1 table_top    # pick-and-place
+# vial-rack pick (grip width/height/seating all AUTO per deck & plate type):
+ros2 run unchained_cell pick_place --source stand_pos2 \
+    --target deck_vortex_pos1 --plate-type 20ml \
+    --also-spawn-at stand_pos1,stand_pos3,...      # other pockets as obstacles
 # hardware: see docs/unchained-cell.md (bridge + hw-scene + --hardware)
 ```
 
@@ -99,8 +102,20 @@ pick_place.py (phase orchestrator, budget gates, telemetry)
   name[] with position[] (order is scrambled; a mis-paired j4 sign cost a day).
 - Stale sim weirdness (`-4` errors, zombie nodes): `ros2_ws/clean_sim.sh`,
   and check `ps -o stat` for `Tl`/`Z` (a Ctrl-Z'd launch looks alive to pgrep).
+  clean_sim.sh does not always kill the unchained `mimic_repeater` —
+  `pkill -9 -f "lib/unchained_cell/mimic_repeater"` too before relaunch.
 - IK branch nondeterminism: same TCP pose has mirror wrist families with
   totally different collision behavior — pin branches (STAGE_HINTS pattern).
+- Gripper "looks wrong" in rviz vs telemetry: trust `/joint_states`
+  (0.0 = OPEN, -0.65 = closed). The mimic_repeater must be running for the
+  display to be truthful (controllers publish only finger1; rsp does not
+  resolve mimic joints). The mirrored-model era is fixed, but the pattern —
+  user-seen pose contradicting telemetry — means a MODEL bug, not a code bug.
+- Vial-rack grips (unchained): width is AUTO per source deck (long side
+  128.5mm at stand pockets, short side 86.1mm at vortex). Over-closing is
+  invisible for the pads (pad↔plate whitelisted) and masquerades as
+  inner-knuckle↔vial contacts — check commanded width FIRST, not finger
+  geometry. Full conventions: docs/unchained-refit-handoff.md.
 
 ## Cell-specific docs — READ BEFORE WORKING ON A CELL
 
@@ -108,3 +123,7 @@ pick_place.py (phase orchestrator, budget gates, telemetry)
   side-pinch grasp, insertion choreography, validated constants
 - **Unchained**: [docs/unchained-cell.md](docs/unchained-cell.md) —
   hardware-proven parameters, bridge operation, gripper force control
+- **Unchained refit (CURRENT state)**:
+  [docs/unchained-refit-handoff.md](docs/unchained-refit-handoff.md) —
+  gripper model fix + aperture calibration, auto grip width, 8-pocket
+  holder, real table, validated matrix, as-built setup numbers, open items
