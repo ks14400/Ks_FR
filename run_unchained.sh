@@ -10,7 +10,7 @@
 #   ./run_unchained.sh stop                   # halt motion (use over Ctrl-C)
 #
 # Decks: deck_9_10_pos1..3, deck_vortex_pos1..3, deck_vacuum_filtration,
-#        table_top
+#        stand_pos1..8 (wellplate holder pockets), table_top
 # Domain isolation (42) is handled automatically. Extra args pass through.
 # Hardware flow (three terminals):
 #   T1: ./run_unchained.sh bridge
@@ -23,10 +23,21 @@ source /opt/ros/humble/setup.bash
 source ros2_ws/install/setup.bash
 export ROS_DOMAIN_ID=42
 
-# Hardware-proven layout + motion flags (see docs/unchained-cell.md).
-HW_SCENE_ARGS="control_mode:=hardware table_x:=-0.3 table_y:=-1.7 table_h:=1"
-BRIDGE_ARGS="robot_ip:=192.168.58.2 movej_vel_pct:=20 movej_acc_pct:=30 gripper_force_pct:=40"
-PICK_FLAGS="--yaw-tol 0.15 --vel 0.10 --hover 0.25 --pick-lift 0.015"
+# REFIT layout (2026-10, sim-validated: 8ml/20ml round trips + all-8-pocket
+# matrix): the world is defined ENTIRELY by the launch defaults — real table
+# mesh at (-0.4,-1.7) top 776.2mm, 8-pocket holder, stand_pos1..8. Hardware
+# must use the SAME world, so hw-scene passes NO geometry overrides.
+# Grip width / grasp height / seating are AUTO in pick_place — no flags.
+HW_SCENE_ARGS="control_mode:=hardware"
+PICK_FLAGS=""
+# Bridge: proven comms values; movej_vel_pct 5 for refit bring-up (raise to
+# the proven 20 only after the refit workflow is hardware-verified).
+BRIDGE_ARGS="robot_ip:=192.168.58.2 movej_vel_pct:=5 movej_acc_pct:=10 gripper_force_pct:=40"
+# LEGACY (pre-refit, hardware-proven 2026-06 with the old box table — kept
+# per rule 7; do NOT use with the refit world):
+#   HW_SCENE_ARGS="control_mode:=hardware table_x:=-0.3 table_y:=-1.7 table_h:=1"
+#   BRIDGE_ARGS="robot_ip:=192.168.58.2 movej_vel_pct:=20 movej_acc_pct:=30 gripper_force_pct:=40"
+#   PICK_FLAGS="--yaw-tol 0.15 --vel 0.10 --hover 0.25 --pick-lift 0.015"
 
 cmd="${1:-sim}"; shift || true
 case "$cmd" in
