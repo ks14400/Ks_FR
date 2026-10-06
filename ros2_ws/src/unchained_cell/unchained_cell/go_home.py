@@ -197,7 +197,10 @@ def main():
             rclpy.shutdown()
             sys.exit(1)
 
-    node.get_logger().info("DONE — arm is at HOME")
+    if args.gripper_only:
+        node.get_logger().info("DONE — gripper command finished (arm untouched)")
+    else:
+        node.get_logger().info("DONE — arm is at HOME")
     rclpy.shutdown()
     sys.exit(0)
 

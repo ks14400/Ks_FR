@@ -1328,6 +1328,12 @@ def main():
                    help="Jaw opening (mm) to close to when gripping the plate. "
                         "Overrides --grip-value. E.g. --grip-mm 70. Uses the "
                         "GRIPPER_STROKE_MM calibration in pick_place.py.")
+    p.add_argument("--source-z-trim", type=float, default=0.0,
+                   help="mm. Raise (+) or lower (-) the SOURCE deck height "
+                        "for this run only — hardware Z calibration. Once a "
+                        "trim is proven, bake it into the deck marker (xacro).")
+    p.add_argument("--target-z-trim", type=float, default=0.0,
+                   help="mm. Same as --source-z-trim for the TARGET deck.")
     p.add_argument("--vel", type=float, default=0.2,
                    help="Arm velocity scaling (default 0.2 for sim). In "
                         "hardware mode, clamped to <=0.10 unless explicitly "
@@ -1574,6 +1580,14 @@ def main():
     tx, ty, tz = (tgt_tf.transform.translation.x,
                   tgt_tf.transform.translation.y,
                   tgt_tf.transform.translation.z)
+    if args.source_z_trim:
+        sz += args.source_z_trim / 1000.0
+        node.get_logger().warning(
+            f"SOURCE Z-TRIM {args.source_z_trim:+.1f}mm (hardware calibration)")
+    if args.target_z_trim:
+        tz += args.target_z_trim / 1000.0
+        node.get_logger().warning(
+            f"TARGET Z-TRIM {args.target_z_trim:+.1f}mm (hardware calibration)")
     node.get_logger().info(f"Source deck in base_link: ({sx:+.3f}, {sy:+.3f}, {sz:+.3f})")
     node.get_logger().info(f"Target deck in base_link: ({tx:+.3f}, {ty:+.3f}, {tz:+.3f})")
 
@@ -1797,6 +1811,13 @@ def main():
     place_hang = (HELD_BOTTOM_BELOW_TCP if HELD_BOTTOM_BELOW_TCP is not None
                   else args.grasp_offset + args.pick_lift)
     place_float = rest_float_for(args.target)
+    if args.hardware and place_float < 0.003:
+        # Real encoders settle a hair off the planned pose; a flush 0.5mm
+        # float makes the model see the seated plate inside the holder floor
+        # (pre-release lift then starts in collision). Release 3mm up and
+        # let the pocket fins seat the plate — that is what they are for.
+        place_float = 0.003
+        node.get_logger().info("   hardware: place float raised to 3mm (drop-seat)")
     node.get_logger().info(
         f"place height: deck + {place_hang*1000:.1f}mm (measured hold) "
         f"+ {place_float*1000:.1f}mm float")
