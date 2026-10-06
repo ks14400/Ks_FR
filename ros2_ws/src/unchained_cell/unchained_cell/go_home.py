@@ -87,6 +87,10 @@ def main():
                    help="What to do with the gripper after homing: "
                         "'close' = jaws fully closed (stow), 'open' = fully "
                         "open, 'keep' = leave as-is (default).")
+    p.add_argument("--gripper-only", action="store_true",
+                   help="Skip the arm-home motion entirely; only run the "
+                        "gripper command. Use when testing jaw widths so the "
+                        "arm doesn't re-correct toward HOME each run.")
     p.add_argument("--gripper-mm", type=float, default=None,
                    help="Open the gripper to a specific jaw width (mm) after "
                         "homing — calibration/test tool. Measure the physical "
@@ -127,35 +131,46 @@ def main():
         node.get_logger().info("Step 1/2: cancel any active motion")
         cancel_all_motion(node, mg)
 
-    node.get_logger().info("Step 2/2: planning + executing home")
-    node.get_logger().info(
-        f"  target HOME_JOINTS: " +
-        ", ".join(f"{k}={v:+.2f}" for k, v in HOME_JOINTS.items()))
-    node.get_logger().info(
-        f"  vel scaling: {args.vel:.3f}  (trajectory will be paced slowly)")
+    if args.gripper_only:
+        node.get_logger().info("Step 2/2: SKIPPED (--gripper-only) — arm stays put")
+    else:
+        node.get_logger().info("Step 2/2: planning + executing home")
+        node.get_logger().info(
+            f"  target HOME_JOINTS: " +
+            ", ".join(f"{k}={v:+.2f}" for k, v in HOME_JOINTS.items()))
+        node.get_logger().info(
+            f"  vel scaling: {args.vel:.3f}  (trajectory will be paced slowly)")
 
-    t0 = time.time()
-    ok, info = plan_arm_to_joints(
-        node, mg, HOME_JOINTS,
-        vel=args.vel,
-        planning_time=args.planning_time,
-        planning_attempts=15,
-        planner_id="RRTstar",
-    )
-    dur = time.time() - t0
+        t0 = time.time()
+        ok, info = plan_arm_to_joints(
+            node, mg, HOME_JOINTS,
+            vel=args.vel,
+            planning_time=args.planning_time,
+            planning_attempts=15,
+            planner_id="RRTstar",
+        )
+        dur = time.time() - t0
 
-    if not ok:
-        node.get_logger().error(f"  [FAIL] {dur:.2f}s — {info}")
-        node.get_logger().error("Arm did NOT reach home. Check rviz.")
-        rclpy.shutdown()
-        sys.exit(1)
-    node.get_logger().info(f"  [OK] {dur:.2f}s — {info}")
+        if not ok:
+            node.get_logger().error(f"  [FAIL] {dur:.2f}s — {info}")
+            node.get_logger().error("Arm did NOT reach home. Check rviz.")
+            rclpy.shutdown()
+            sys.exit(1)
+        node.get_logger().info(f"  [OK] {dur:.2f}s — {info}")
 
     if args.gripper_mm is not None:
-        target = grip_mm_to_joint(args.gripper_mm)
-        node.get_logger().info(
-            f"Step 3: gripper to {args.gripper_mm:.0f}mm (joint={target:+.3f}, "
-            f"stroke={GRIPPER_STROKE_MM:.0f}mm) — MEASURE the physical gap")
+        if args.hardware:
+            from unchained_cell.pick_place import hw_grip_mm_to_joint
+            target = hw_grip_mm_to_joint(args.gripper_mm)
+            node.get_logger().info(
+                f"Step 3: gripper to {args.gripper_mm:.0f}mm REAL gap "
+                f"(hw-calibrated, joint={target:+.3f}) — MEASURE the gap: "
+                "it should now match the commanded mm")
+        else:
+            target = grip_mm_to_joint(args.gripper_mm)
+            node.get_logger().info(
+                f"Step 3: gripper to {args.gripper_mm:.0f}mm (joint={target:+.3f}, "
+                f"stroke={GRIPPER_STROKE_MM:.0f}mm) — MEASURE the physical gap")
         t0 = time.time()
         ok, info = plan_gripper(node, mg, target)
         dur = time.time() - t0

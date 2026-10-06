@@ -205,6 +205,26 @@ def grip_mm_to_joint(mm):
             hi = mid
     return 0.5 * (lo + hi)
 
+
+# ── REAL AG-145 aperture calibration (measured on hardware 2026-10-06) ──
+# The physical pad gap differs from the model's: commanding a model gap of
+# 128.5mm produced 123.5mm real; 86.1mm produced 87.3mm. Two-point linear
+# map real->model (valid over the working range ~80-130mm):
+#     model_cmd = 1.17127 * real_gap - 16.152
+# On hardware, grip widths are specified as REAL gaps and converted through
+# this map. The grip itself is FORCE-controlled (the jaws stop on the plate
+# at gripper_force_pct), so HW targets sit HW_GRIP_SQUEEZE_MM tighter than
+# the plate span — the force stop does the precision, the command just has
+# to land tighter than the part without approaching the knuckle-vial zone.
+HW_APERTURE_REAL_TO_MODEL = (1.17127, -16.152)
+HW_GRIP_SQUEEZE_MM = 2.0
+
+
+def hw_grip_mm_to_joint(real_mm):
+    """REAL pad gap (mm, as measured on the physical AG-145) -> joint value."""
+    m, c = HW_APERTURE_REAL_TO_MODEL
+    return grip_mm_to_joint(m * real_mm + c)
+
 # Gripper-down orientation, with a yaw compensation so the jaws meet the
 # plate SQUARE on its sides.
 #
@@ -1414,11 +1434,18 @@ def main():
         args.hover = min_hover
 
     # ── Gripper width: --grip-mm overrides --grip-value ──
+    # On hardware, --grip-mm means the REAL measured pad gap (converted via
+    # the two-point hardware calibration); in sim it is the model gap.
     if args.grip_mm is not None:
-        args.grip_value = grip_mm_to_joint(args.grip_mm)
-        print(f"[gripper] --grip-mm {args.grip_mm} -> grip-value "
-              f"{args.grip_value:.3f} (stroke {GRIPPER_STROKE_MM:.0f}mm)",
-              file=sys.stderr)
+        if args.hardware:
+            args.grip_value = hw_grip_mm_to_joint(args.grip_mm)
+            print(f"[gripper] --grip-mm {args.grip_mm} REAL (hw-cal) -> "
+                  f"grip-value {args.grip_value:.3f}", file=sys.stderr)
+        else:
+            args.grip_value = grip_mm_to_joint(args.grip_mm)
+            print(f"[gripper] --grip-mm {args.grip_mm} -> grip-value "
+                  f"{args.grip_value:.3f} (stroke {GRIPPER_STROKE_MM:.0f}mm)",
+                  file=sys.stderr)
 
     # ── Hardware velocity clamp ──
     # When running against real hardware, refuse to use sim-typical fast speeds.
@@ -1564,13 +1591,22 @@ def main():
     _along_long = abs(float(_pad_axis @ _Rsrc[:, 2]))   # marker Z = long axis
     _along_short = abs(float(_pad_axis @ _Rsrc[:, 0]))  # marker X = short axis
     _span = PLATE_FOOT_X if _along_long >= _along_short else PLATE_FOOT_Z
-    auto_grip_mm = _span * 1000.0 + 0.6
     if args.grip_mm is None and args.grip_value == -0.64:
-        args.grip_value = grip_mm_to_joint(auto_grip_mm)
+        if args.hardware:
+            # REAL target: squeeze past the span so the force stop lands ON
+            # the plate (the real close halts at the part, never tighter).
+            auto_grip_mm = _span * 1000.0 - HW_GRIP_SQUEEZE_MM
+            args.grip_value = hw_grip_mm_to_joint(auto_grip_mm)
+            which = "REAL (hw-cal, force-stop grips the plate)"
+        else:
+            # sim: geometric close to just-touch (validated matrix widths)
+            auto_grip_mm = _span * 1000.0 + 0.6
+            args.grip_value = grip_mm_to_joint(auto_grip_mm)
+            which = "model"
         node.get_logger().info(
             f"grip width AUTO: jaws across the "
             f"{'LONG' if _span == PLATE_FOOT_X else 'SHORT'} axis at "
-            f"{args.source} -> {auto_grip_mm:.1f}mm "
+            f"{args.source} -> {auto_grip_mm:.1f}mm {which} "
             f"(grip-value {args.grip_value:+.3f})")
 
     # ── PLACE ORIENTATION — MEASURED, never hand-derived. The rigid attach
