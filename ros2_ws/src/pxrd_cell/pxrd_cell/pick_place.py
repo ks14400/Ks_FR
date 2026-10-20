@@ -47,6 +47,7 @@ from moveit_msgs.msg import (
 )
 from moveit_msgs.srv import (
     ApplyPlanningScene, GetCartesianPath, GetPositionIK, GetPlanningScene,
+    GetPositionFK,
 )
 from moveit_msgs.msg import PlanningSceneComponents
 from shape_msgs.msg import SolidPrimitive
@@ -89,6 +90,51 @@ SIDE_STANDOFF = 0.060    # m, approach standoff behind the paddle
 SIDE_JAW_GAP_MM = 40.0   # jaw opening while approaching/releasing: enough to
                          # clear the 12-18mm paddle, small enough that the
                          # lower jaw never dips into the table / bay floor
+ENCLOSED_JAW_GAP_MM = 30.0  # tighter gap for the enclosed (in-bay) acquire
+
+# ============================================================
+# PLATE REVISIONS — selected with --plate (default v2)
+# ============================================================
+# v2  riser design (sim-validated 2026-09): paddle RAISED on a stem, pinch
+#     center 61.5mm above deck, 110.6mm from the well center.
+# v3  overhang design (check.STL 2026-10-20): LOW tab 155.7mm out — the paddle
+#     (15mm thick, pinch center deck+32.1mm) OVERHANGS the support edge at
+#     both decks (table edge = 150mm from marker; SmartLab stage ends ~Z110),
+#     so the AG-145 lower fingertip hangs in free air below deck level.
+#     Jaw gap must be 30mm even on the open deck: at 40mm the fingertip's
+#     forward tip passes ~3mm BELOW the table top over the table corner
+#     (measured analytically from the finger FK; gripper-vs-table is masked
+#     in the SRDF, so the planner would NOT catch it). 30mm clears by +2.5mm.
+PLATES = {
+    "v2": dict(mesh="the_plate_collision.stl",
+               tab_center_x=-0.1106, tab_thickness=0.020, tab_width=0.077,
+               tab_pinch_y=0.0615, side_jaw_gap_mm=40.0,
+               enclosed_jaw_gap_mm=30.0),
+    "v3": dict(mesh="the_plate_v3_collision.stl",
+               tab_center_x=-0.1557, tab_thickness=0.015, tab_width=0.060,
+               tab_pinch_y=0.0321, side_jaw_gap_mm=30.0,
+               enclosed_jaw_gap_mm=30.0),
+}
+DEFAULT_PLATE = "v2"
+
+
+def apply_plate(name):
+    """Point the module-level plate constants at one PLATES revision.
+
+    Module-level because every helper (and the importing tools) reads these
+    globals at call time; mutating them keeps the whole file on one plate.
+    """
+    global TABBED_PLATE_MESH, TAB_CENTER_X, TAB_THICKNESS, TAB_WIDTH
+    global TAB_PINCH_Y, SIDE_JAW_GAP_MM, ENCLOSED_JAW_GAP_MM, _PLATE_MESH_CACHE
+    cfg = PLATES[name]
+    TABBED_PLATE_MESH = cfg["mesh"]
+    TAB_CENTER_X = cfg["tab_center_x"]
+    TAB_THICKNESS = cfg["tab_thickness"]
+    TAB_WIDTH = cfg["tab_width"]
+    TAB_PINCH_Y = cfg["tab_pinch_y"]
+    SIDE_JAW_GAP_MM = cfg["side_jaw_gap_mm"]
+    ENCLOSED_JAW_GAP_MM = cfg["enclosed_jaw_gap_mm"]
+    _PLATE_MESH_CACHE = None
 
 # Canonical resting pose of the tabbed plate at the PXRD sample, in the
 # pxrd_smartlab (CAD) frame — dialed in sim and confirmed against CAD.
@@ -477,8 +523,54 @@ def _validate_budget(trajectory,
                   f"{s['n_pts']}pts, traj_dur={s['duration']:.1f}s")
 
 
+def _trajectory_max_tilt(node, fk_client, trajectory,
+                         link="gripper_grasp_link", timeout=15.0):
+    """Max tilt (deg) of the plate top-face normal across ALL waypoints of a
+    planned trajectory, via /compute_fk. In the side grasp the plate normal is
+    the gripper X axis; tilt = its angle from base_link +Z (vertical).
+    Returns None if FK is unavailable (caller must treat as gate failure)."""
+    jt = trajectory.joint_trajectory
+    names = list(jt.joint_names)
+    worst = 0.0
+    for pt in jt.points:
+        req = GetPositionFK.Request()
+        req.header.frame_id = "base_link"
+        req.fk_link_names = [link]
+        req.robot_state.joint_state.name = names
+        req.robot_state.joint_state.position = list(pt.positions)
+        fut = fk_client.call_async(req)
+        deadline = time.time() + timeout
+        while not fut.done() and time.time() < deadline:
+            time.sleep(0.002)
+        if not fut.done():
+            return None
+        res = fut.result()
+        if res is None or res.error_code.val != 1 or not res.pose_stamped:
+            return None
+        R = _quat_to_R(res.pose_stamped[0].pose.orientation)
+        # gripper X axis in base frame = column 0; tilt = angle from +Z
+        tilt = math.degrees(math.acos(max(-1.0, min(1.0, R[2][0]))))
+        worst = max(worst, tilt)
+    return worst
+
+
+def _check_tilt_gate(node, tilt_gate, trajectory):
+    """Apply the carry-tilt gate (if armed) to a planned trajectory.
+    tilt_gate = (fk_client, max_deg) or None. Returns (ok, suffix_or_error)."""
+    if tilt_gate is None:
+        return True, ""
+    fk_client, max_deg = tilt_gate
+    tilt = _trajectory_max_tilt(node, fk_client, trajectory)
+    if tilt is None:
+        return False, "REJECTED tilt gate: /compute_fk unavailable"
+    if tilt > max_deg:
+        return False, (f"REJECTED tilt: plate would tip {tilt:.1f}° "
+                       f"(> {max_deg:.1f}° carry limit)")
+    return True, f", tilt≤{tilt:.1f}°"
+
+
 def _send_plan_validate_execute(node, mg_client, exec_client, goal,
-                                  timeout=90.0):
+                                  timeout=90.0, tilt_gate=None):
     """Plan-only via MoveGroup → validate against budgets → execute via
     ExecuteTrajectory if validated. This separates planning from execution
     so we can reject "crazy" trajectories BEFORE the arm moves."""
@@ -507,6 +599,11 @@ def _send_plan_validate_execute(node, mg_client, exec_client, goal,
     ok, info = _validate_budget(trajectory)
     if not ok:
         return False, info
+    # Layer-2 carry-tilt gate (only armed while the plate is held)
+    ok, tilt_info = _check_tilt_gate(node, tilt_gate, trajectory)
+    if not ok:
+        return False, tilt_info
+    info += tilt_info
 
     # Validated — execute via ExecuteTrajectory action
     exec_goal = ExecuteTrajectory.Goal()
@@ -752,7 +849,7 @@ def plan_arm_to_pose_via_ik(node, mg, ik_cli, scene_client,
                             planner_id="RRTstar",
                             exec_client=None,
                             keep_orientation_along_path=False,
-                            path_tilt_tol=0.3):
+                            path_tilt_tol=0.3, hint=None):
     """Plan to a pose by FIRST searching multiple IK seeds for the joint
     config closest to current, THEN planning a joint-space goal to it.
     OMPL is given a deterministic goal that's by construction close to
@@ -760,12 +857,28 @@ def plan_arm_to_pose_via_ik(node, mg, ik_cli, scene_client,
 
     `keep_orientation_along_path`: hold the gripper flat (within path_tilt_tol
     roll/pitch of `q`) for the whole trajectory so a carried plate can't swing.
+
+    `hint`: joint dict that biases the IK seed toward a known-good wrist
+    family (same mechanism as plan_side_stage). Used to make the OPEN-deck
+    pick land in the family the subsequent flat carry glide needs.
     """
     current_state = get_current_robot_state(node, scene_client)
     if current_state is None:
         return False, "could not fetch current robot state"
+    ik_state = current_state
+    if hint is not None:
+        import copy
+        ik_state = copy.deepcopy(current_state)
+        names = list(ik_state.joint_state.name)
+        pos = list(ik_state.joint_state.position)
+        for i, nm in enumerate(names):
+            if nm in hint:
+                pos[i] = hint[nm]
+        ik_state.joint_state.position = pos
+        node.get_logger().info("   pose IK seeded from hint family "
+                               + ", ".join(f"{k}={v:+.2f}" for k, v in hint.items()))
     target_joints, ik_delta = compute_ik_best_of_many(
-        node, ik_cli, base, link, x, y, z, q, current_state, group=group)
+        node, ik_cli, base, link, x, y, z, q, ik_state, group=group)
     if target_joints is None:
         return False, "IK failed (no collision-free solution at the requested pose)"
     return plan_arm_to_joints(node, mg, target_joints, vel=vel,
@@ -796,7 +909,7 @@ STAGE_HINTS = {
 def plan_side_stage(node, mg, ik_cli, scene_client, x, y, z, q,
                     vel=0.2, planning_time=15.0, planning_attempts=30,
                     planner_id="RRTConnect", exec_client=None, hint=None,
-                    j1_first=False):
+                    j1_first=False, tilt_gate=None):
     """Two-hop staging for the side carry: OMPL reliably fails to connect the
     lifted-pick config to the stage config in one go (long j1 swing + posture
     change with a long plate attached). So: (1) solve IK for the stage pose,
@@ -853,7 +966,8 @@ def plan_side_stage(node, mg, ik_cli, scene_client, x, y, z, q,
                                       planning_time=planning_time,
                                       planning_attempts=planning_attempts,
                                       planner_id=planner_id,
-                                      exec_client=exec_client)
+                                      exec_client=exec_client,
+                                      tilt_gate=tilt_gate)
         if not ok:
             return False, f"stage hop {i+1} ({label}): {info}"
     return True, info
@@ -864,7 +978,7 @@ def plan_arm_to_joints(node, mg, joint_values, vel=0.2, planning_time=5.0,
                        exec_client=None,
                        keep_orientation_along_path=False, orient_q=None,
                        base_frame="base_link", link="gripper_grasp_link",
-                       path_tilt_tol=0.3):
+                       path_tilt_tol=0.3, tilt_gate=None):
     """Plan the arm group to a specific joint configuration (deterministic).
 
     Use this for "go to home" or any time you want the arm in a known config
@@ -911,7 +1025,8 @@ def plan_arm_to_joints(node, mg, joint_values, vel=0.2, planning_time=5.0,
         req.path_constraints = path_constraints
 
     if exec_client is not None:
-        return _send_plan_validate_execute(node, mg, exec_client, goal)
+        return _send_plan_validate_execute(node, mg, exec_client, goal,
+                                           tilt_gate=tilt_gate)
     goal.planning_options.plan_only = False
     return _send_and_wait(node, mg, goal)
 
@@ -1155,7 +1270,7 @@ def goto_at_deck(node, mg, buf, deck, grasp_offset, vel, yaw_tol):
 
 
 def cartesian_move(node, cart_client, exec_client, base_frame, link,
-                   x, y, z, q, vel=0.2, max_step=0.005):
+                   x, y, z, q, vel=0.2, max_step=0.005, tilt_gate=None):
     """Plan + execute a straight-line Cartesian move from current pose to (x,y,z,q).
 
     Collision-checked every `max_step` (5 mm). Returns (ok, fraction, n_pts, details).
@@ -1190,6 +1305,11 @@ def cartesian_move(node, cart_client, exec_client, base_frame, link,
             f"cartesian-plan: only {fraction*100:.1f}% reachable as a straight line "
             f"(blocked by collision or singularity beyond that point)")
 
+    # Carry-tilt gate (armed only while the plate is held)
+    gate_ok, gate_info = _check_tilt_gate(node, tilt_gate, traj)
+    if not gate_ok:
+        return False, fraction, n_pts, gate_info
+
     # ----- Execute -----
     goal = ExecuteTrajectory.Goal()
     goal.trajectory = traj
@@ -1216,7 +1336,7 @@ def cartesian_move(node, cart_client, exec_client, base_frame, link,
     return True, fraction, n_pts, (
         f"frac=1.0, {n_pts}pts, travel={s['travel']:.2f}rad "
         f"({s['worst_joint']}={s['worst_travel']:.2f}), "
-        f"traj_dur={s['duration']:.1f}s")
+        f"traj_dur={s['duration']:.1f}s{gate_info}")
 
 
 # ============================================================================
@@ -1450,7 +1570,29 @@ def main():
                         "now pick from deck_9_10_pos2'. The arm will plan around "
                         "those plates. Example: "
                         "--also-spawn-at deck_9_10_pos1,deck_9_10_pos3")
+    p.add_argument("--plate", choices=sorted(PLATES), default=DEFAULT_PLATE,
+                   help="Plate revision (mesh + tab geometry + jaw gaps). "
+                        "v2 = riser design (sim-validated 2026-09). "
+                        "v3 = low overhang-tab design (check.STL 2026-10-20). "
+                        f"Default {DEFAULT_PLATE}.")
+    p.add_argument("--max-carry-tilt", type=float, default=10.0,
+                   help="HARD tilt gate while the plate is held (deg, default "
+                        "10). Every waypoint of every carried transit "
+                        "trajectory is FK-checked; a plan that would tip the "
+                        "plate top face more than this is rejected before "
+                        "execution (sample must not spill). 0 disables.")
+    p.add_argument("--no-glide", action="store_true",
+                   help="Skip the flat Cartesian carry glide and always use "
+                        "the staged-ladder carry (debug). The ladder is still "
+                        "tilt-gated while the plate is held.")
     args = p.parse_args()
+
+    # ── Plate revision: must be applied before any geometry is computed ──
+    apply_plate(args.plate)
+    print(f"[plate] revision {args.plate}: mesh={TABBED_PLATE_MESH} "
+          f"tab_center_x={TAB_CENTER_X:+.4f} pinch_y={TAB_PINCH_Y:.4f} "
+          f"jaw_gap={SIDE_JAW_GAP_MM:.0f}/{ENCLOSED_JAW_GAP_MM:.0f}mm",
+          file=sys.stderr)
 
     # ── Pick grasp height: deck pick stops --pick-lift higher than place ──
     # so the fingertips clear the deck. Place still uses plain grasp_offset.
@@ -1520,6 +1662,8 @@ def main():
         GetPositionIK, "/compute_ik", callback_group=cb_group)
     get_scene_client = node.create_client(
         GetPlanningScene, "/get_planning_scene", callback_group=cb_group)
+    fk_client = node.create_client(
+        GetPositionFK, "/compute_fk", callback_group=cb_group)
 
     node.get_logger().info("Waiting for /move_action ...")
     if not mg.wait_for_server(timeout_sec=15.0):
@@ -1557,6 +1701,37 @@ def main():
         node.get_logger().error(msg)
         _print_summary(node, phases)
         rclpy.shutdown(); sys.exit(1)
+
+    # ── Carry-tilt gate: armed for every phase executed while the plate is
+    # held. FK-checks all waypoints of the planned trajectory and REJECTS
+    # plans that would tip the plate (sample must not spill). ──
+    carry_gate = ((fk_client, args.max_carry_tilt)
+                  if args.max_carry_tilt > 0 else None)
+
+    def attempt_glide(name, gx, gy, gz, gq):
+        """Try the FLAT CARRY GLIDE: one straight Cartesian segment with the
+        orientation locked (plate stays level by construction). Returns True
+        and logs an OK phase on success; returns False (caller falls back to
+        the staged ladder) without recording a failed phase."""
+        bar = "=" * 64
+        node.get_logger().info(bar)
+        node.get_logger().info(f"PHASE: {name}   [Cartesian]")
+        node.get_logger().info("   mode: flat carry glide — straight line, "
+                               "orientation locked (plate level)")
+        node.get_logger().info(f"   to: ({gx:+.3f}, {gy:+.3f}, {gz:+.3f})")
+        t0 = time.time()
+        ok, frac, n_pts, info = cartesian_move(
+            node, cart_client, exec_client, "base_link", "gripper_grasp_link",
+            gx, gy, gz, gq, vel=args.vel, max_step=0.01,
+            tilt_gate=carry_gate)
+        dur = time.time() - t0
+        if ok:
+            phases.append((name, "Cartesian", dur, True, info))
+            node.get_logger().info(f"   [OK]   {dur:.2f}s   {info}")
+            return True
+        node.get_logger().warning(
+            f"   glide unavailable ({info}) — falling back to staged ladder")
+        return False
 
     # ============================================================
     # PHASE 0a: purge any stale plate state  (idempotent reset)
@@ -1672,7 +1847,8 @@ def main():
     if args.grasp_mode == "side":
         # Narrower opening when diving into the enclosed bay (see acquire
         # comment): 30mm clears the shelf under the open lower jaw tip.
-        open_val = grip_mm_to_joint(30.0 if src_enclosed else SIDE_JAW_GAP_MM)
+        open_val = grip_mm_to_joint(
+            ENCLOSED_JAW_GAP_MM if src_enclosed else SIDE_JAW_GAP_MM)
     else:
         open_val = GRIPPER_OPEN
     if args.no_gripper:
@@ -1718,6 +1894,11 @@ def main():
                                    f"empty jaws at pinch height"):
                 fail("stage-outside (acquire) failed")
         else:
+            # Seed the pick IK with the ENCLOSED deck's stage family: the
+            # carry to the bay is a flat Cartesian glide, which cannot change
+            # wrist family mid-flight — so the pick must already be in the
+            # family the insert needs.
+            pick_hint = STAGE_HINTS.get(args.target) if tgt_enclosed else None
             if not _run_phase(node, phases, f"approach behind {args.source} tab", "OMPL+IK",
                               lambda: plan_arm_to_pose_via_ik(
                                   node, mg, ik_client, get_scene_client,
@@ -1727,10 +1908,12 @@ def main():
                                   planning_time=args.planning_time,
                                   planner_id=args.planner,
                                   planning_attempts=args.num_attempts,
-                                  exec_client=exec_client),
+                                  exec_client=exec_client,
+                                  hint=pick_hint),
                               target=f"({app_x:+.3f}, {app_y:+.3f}, {pz:+.3f}) horizontal",
                               note=f"{SIDE_STANDOFF*1000:.0f}mm behind paddle, "
-                                   f"pinch height deck+{TAB_PINCH_Y*1000:.0f}mm",
+                                   f"pinch height deck+{TAB_PINCH_Y*1000:.0f}mm"
+                                   + (", hint-seeded to carry family" if pick_hint else ""),
                               ompl=f"{args.planner}, {args.planning_time:.0f}s × {args.num_attempts}"):
                 fail("side approach failed")
 
@@ -1942,18 +2125,30 @@ def main():
         t_adv_y = ty - vy * PAD_OFFSET_FROM_TCP
         t_pz = tz + TAB_PINCH_Y + grab_dz   # release higher by the pinch offset
         t_carry = t_pz + 0.080
-        if not _run_phase(node, phases, f"carry above {args.target}", "OMPL+IK",
-                          lambda: plan_side_stage(
-                              node, mg, ik_client, get_scene_client,
-                              t_adv_x, t_adv_y, t_carry, deposit_q,
-                              vel=args.vel, planning_time=args.transit_time,
-                              planning_attempts=args.num_attempts,
-                              planner_id=args.planner, exec_client=exec_client,
-                              hint=STAGE_HINTS.get(args.target),
-                              j1_first=src_enclosed),
-                          target=f"({t_adv_x:+.3f}, {t_adv_y:+.3f}, {t_carry:+.3f}) horizontal",
-                          method="staged ladder, branch-pinned, j1-first from bay"):
-            fail("carry-above failed")
+        # FLAT CARRY first: acquire and deposit share one orientation (both
+        # decks' tabs point the same way), so the whole carry can be one
+        # straight orientation-locked Cartesian segment — the plate stays
+        # level by construction. The tilt-gated ladder is the fallback.
+        qd = abs(grasp_q.x * deposit_q.x + grasp_q.y * deposit_q.y
+                 + grasp_q.z * deposit_q.z + grasp_q.w * deposit_q.w)
+        glided = (not args.no_glide and qd > 0.9999
+                  and attempt_glide(f"flat glide above {args.target}",
+                                    t_adv_x, t_adv_y, t_carry, deposit_q))
+        if not glided:
+            if not _run_phase(node, phases, f"carry above {args.target}", "OMPL+IK",
+                              lambda: plan_side_stage(
+                                  node, mg, ik_client, get_scene_client,
+                                  t_adv_x, t_adv_y, t_carry, deposit_q,
+                                  vel=args.vel, planning_time=args.transit_time,
+                                  planning_attempts=args.num_attempts,
+                                  planner_id=args.planner, exec_client=exec_client,
+                                  hint=STAGE_HINTS.get(args.target),
+                                  j1_first=src_enclosed,
+                                  tilt_gate=carry_gate),
+                              target=f"({t_adv_x:+.3f}, {t_adv_y:+.3f}, {t_carry:+.3f}) horizontal",
+                              method="staged ladder, branch-pinned, j1-first "
+                                     "from bay, tilt-gated"):
+                fail("carry-above failed")
         if not _run_phase(node, phases, f"descend to place at {args.target}", "Cartesian",
                           lambda: cartesian_move(
                               node, cart_client, exec_client,
@@ -1989,15 +2184,29 @@ def main():
         stage_y = in_y - vy * args.insert_depth
         z_ins = z_set + args.pre_release_lift   # slide slightly high
 
-        if args.grasp_mode == "side":
+        glided = False
+        if args.grasp_mode == "side" and not args.no_glide:
+            # FLAT CARRY first (see the deposit-side comment): straight
+            # orientation-locked segment from the post-lift pose to the stage
+            # point outside the opening. Plate stays level by construction.
+            qd = abs(grasp_q.x * deposit_q.x + grasp_q.y * deposit_q.y
+                     + grasp_q.z * deposit_q.z + grasp_q.w * deposit_q.w)
+            if qd > 0.9999:
+                glided = attempt_glide(
+                    f"flat glide to stage outside {args.target}",
+                    stage_x, stage_y, z_ins, deposit_q)
+        if glided:
+            stage_planner = None
+        elif args.grasp_mode == "side":
             stage_planner = lambda: plan_side_stage(
                 node, mg, ik_client, get_scene_client,
                 stage_x, stage_y, z_ins, deposit_q,
                 vel=args.vel, planning_time=args.transit_time,
                 planning_attempts=args.num_attempts,
                 planner_id=args.planner, exec_client=exec_client,
-                hint=STAGE_HINTS.get(args.target))
-            stage_method = "3-hop staged, branch-pinned"
+                hint=STAGE_HINTS.get(args.target),
+                tilt_gate=carry_gate)
+            stage_method = "3-hop staged, branch-pinned, tilt-gated"
         else:
             stage_planner = lambda: plan_arm_to_pose_via_ik(
                 node, mg, ik_client, get_scene_client,
@@ -2011,15 +2220,16 @@ def main():
                 keep_orientation_along_path=args.keep_plate_flat,
                 path_tilt_tol=args.path_tilt_tol)
             stage_method = "IK-seeded joint goal"
-        if not _run_phase(node, phases, f"stage outside {args.target}", "OMPL+IK",
-                          stage_planner,
-                          target=f"({stage_x:+.3f}, {stage_y:+.3f}, {z_ins:+.3f}) "
-                                 + ("horizontal" if args.grasp_mode == "side" else "gripper-down"),
-                          method=stage_method,
-                          note=f"{args.insert_depth*1000:.0f}mm outside the "
-                               f"opening, at insert height (free space)",
-                          ompl=f"{args.planner}, {args.transit_time:.0f}s × {args.num_attempts}"):
-            fail("stage-outside failed")
+        if stage_planner is not None:
+            if not _run_phase(node, phases, f"stage outside {args.target}", "OMPL+IK",
+                              stage_planner,
+                              target=f"({stage_x:+.3f}, {stage_y:+.3f}, {z_ins:+.3f}) "
+                                     + ("horizontal" if args.grasp_mode == "side" else "gripper-down"),
+                              method=stage_method,
+                              note=f"{args.insert_depth*1000:.0f}mm outside the "
+                                   f"opening, at insert height (free space)",
+                              ompl=f"{args.planner}, {args.transit_time:.0f}s × {args.num_attempts}"):
+                fail("stage-outside failed")
 
         if not _run_phase(node, phases, f"insert into {args.target}", "Cartesian",
                           lambda: cartesian_move(

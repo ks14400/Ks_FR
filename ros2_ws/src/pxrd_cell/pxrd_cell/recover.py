@@ -71,7 +71,12 @@ def main():
                    help="After homing, purge plate scene state (sim reset). "
                         "NEVER use if the real gripper physically holds a plate.")
     p.add_argument("--vel", type=float, default=0.1)
+    from pxrd_cell.pick_place import PLATES, DEFAULT_PLATE, apply_plate
+    p.add_argument("--plate", choices=sorted(PLATES), default=DEFAULT_PLATE,
+                   help="Plate revision (tab geometry) for the retract "
+                        f"corridor aim. Match the stranded run. Default {DEFAULT_PLATE}.")
     args = p.parse_args()
+    apply_plate(args.plate)
 
     rclpy.init()
     node = Node("recover")

@@ -11,6 +11,7 @@ CLAUDE.md rules.
 | 8ml round trip stand_pos2 ↔ deck_vortex_pos1 (7 neighbor racks live) | **PASS both legs, repeated after fresh relaunch** |
 | 20ml round trip stand_pos2 ↔ deck_vortex_pos1 | **PASS both legs** |
 | 20ml LOAD from ALL 8 holder pockets → vortex pos1 | **PASS 8/8** (at final table position, see below) |
+| 8ml ROUND TRIP all 8 pockets ↔ vortex pos1 (2026-10-20) | **PASS 16/16** — load + retrieve every pocket, neighbors live |
 | sd rack | **NOT yet run** with the new grip/holder — next task |
 | Retrieve legs from vortex for pos7/pos8 sources | not spot-checked yet |
 | deck_9_10 with final geometry | not re-run since refit fixes |

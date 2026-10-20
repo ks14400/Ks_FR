@@ -89,6 +89,10 @@ def main():
                    help="reference frame (default pxrd_smartlab = PXRD origin)")
     p.add_argument("--id", default=PLATE_VIZ_ID, help="collision object id")
     p.add_argument("--remove", action="store_true", help="remove the object")
+    from pxrd_cell.pick_place import PLATES, DEFAULT_PLATE
+    p.add_argument("--plate", choices=sorted(PLATES), default=DEFAULT_PLATE,
+                   help="Plate revision mesh to spawn (v2 riser / v3 overhang "
+                        f"tab). Default {DEFAULT_PLATE}.")
     args = p.parse_args()
 
     rclpy.init()
@@ -112,7 +116,7 @@ def main():
         node.get_logger().info(f"Removing '{args.id}'")
     else:
         share = get_package_share_directory("pxrd_cell")
-        stl = os.path.join(share, "meshes", "the_plate_collision.stl")
+        stl = os.path.join(share, "meshes", PLATES[args.plate]["mesh"])
         mesh = load_stl_mesh(stl)
         pose = Pose()
         pose.position = Point(x=args.x, y=args.y, z=args.z)

@@ -13,7 +13,7 @@ simulation and on real hardware (switch = launch args, not code):
 | Cell | Robot | Instrument | Status |
 |---|---|---|---|
 | **unchained** (`unchained_cell`) | FR16 + DH AG-145 gripper | Unchained Junior (open decks) | **Refit sim-validated** (2026-10): vial racks on 8-pocket holder + real table; 8ml/20ml round trips + all-8-pocket matrix pass strict checking. Pre-refit cell was hardware-proven; refit hardware bring-up in progress — see [docs/unchained-refit-handoff.md](docs/unchained-refit-handoff.md) |
-| **pxrd** (`pxrd_cell`) | FR10 + DH AG-145 gripper | Rigaku SmartLab PXRD (enclosed bay) | **Sim-validated round trip** — hardware bring-up pending. CAUTION: validated under the old mirrored gripper model; re-validate grips |
+| **pxrd** (`pxrd_cell`) | FR10 + DH AG-145 gripper | Rigaku SmartLab PXRD (enclosed bay) | **Sim-validated round trip** — hardware bring-up pending. v3 overhang plate (`--plate v3`, from check.STL 2026-10) validated under the FIXED gripper model; v2 riser plate validation predates the gripper fix |
 
 Everything lives in one colcon workspace: `ros2_ws/`.
 
