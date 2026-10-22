@@ -18,8 +18,17 @@ source /opt/ros/humble/setup.bash
 source ros2_ws/install/setup.bash
 export ROS_DOMAIN_ID=43
 
-# Canonical validated layout (2026-09): tall pedestal, table to the side.
-SIM_ARGS="tall_pedestal:=true pedestal_off_z:=0.55 pedestal_off_x:=0 pedestal_off_y:=-0.2 table_x:=-0.5 table_y:=-0.9 table_h:=0.5"
+# Canonical FLAT-CARRY layout (2026-10-21, validated with the v3 plate):
+# pedestal stepped BACK to 0.70 and shifted +0.15 east vs the 2026-09 layout
+# (was off_z 0.55, off_x 0). Why: the v3 plate's long tab closes every carry
+# clearance at the old spot — the swing arc grazes the SmartLab cabinet's
+# west corner by 1 mm (structural: the arm cannot fold below the stage
+# radius) and the bay-mouth wrist yaw shaves the face. At 0.70/+0.15 the
+# corner clears by ~10 cm and the bay-mouth yaw circle clears by 4-14 cm.
+# The carry itself replays a TAUGHT flat path (config/taught_carry_*.json),
+# collision+tilt-checked live each run; the tilt gate (--max-carry-tilt 10)
+# guarantees the plate top face never tips, measured 9.3 deg max.
+SIM_ARGS="tall_pedestal:=true pedestal_off_z:=0.70 pedestal_off_x:=0.15 pedestal_off_y:=-0.2 table_x:=-0.5 table_y:=-0.9 table_h:=0.5"
 # Canonical validated motion flags.
 RUN_FLAGS="--planner RRTConnect --place-lift 0.005 --transit-time 20"
 

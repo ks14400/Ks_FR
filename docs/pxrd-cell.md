@@ -103,6 +103,49 @@ settle, each a short deterministic joint goal. Order flips to **j1-first**
 when leaving the bay (`j1_first=True`) — re-posturing next to the instrument
 reaches into it; swinging away in carry posture is safe.
 
+## FLAT CARRY (2026-10-21): sample-safe plate transport
+
+The carry (table ⇄ bay) keeps the plate top face LEVEL so powder samples
+cannot spill. Three layers, all in `pick_place.py`:
+
+1. **Carry tilt gate** (`--max-carry-tilt`, default 10°, 0 disables): every
+   trajectory planned while the plate is held is FK-checked waypoint-by-
+   waypoint and REJECTED before execution if the plate would tip past the
+   limit. Nothing that spills can execute, period.
+2. **Taught replay**: the carry replays a taught flat path
+   (`config/taught_carry_pxrd_sample__table_top.json`, 124 waypoints,
+   recorded from a gated success) as a joint polyline — every sample
+   collision-checked against the LIVE scene + tilt-gated each run. One
+   file serves both directions (reversed for the load). Measured: 9.32°
+   max tilt, identical on every run, zero retries.
+3. **Gated hop ladder** (fallback if the replay is blocked): wrist yaw at
+   the bay mouth → j1 swing with the plate nose TRAILING inboard →
+   pitch-locked posture; each hop tried as a straight joint LERP first
+   (level by construction), then gated OMPL rolls.
+
+**Layout is load-bearing** (why run_pxrd.sh pins pedestal_off_z 0.70,
+pedestal_off_x 0.15): at the 2026-09 pedestal spot the v3 plate's nose arc
+grazes the SmartLab cabinet's WEST corner (base-axis radius 0.816 m) by
+1 mm — structural, because the arm's elbow cannot fold below the stage
+radius (~0.53 m), so the nose rides at 0.815 m. Stepping the pedestal back
+(+0.15 z) and east (+0.15 x) buys ~10 cm there and 4–14 cm for the
+bay-mouth wrist yaw. HOME j1 is −0.35 at this layout (at j1=0 the hanging
+fingertip touches the instrument's east cabinet).
+
+**Re-teaching** (after any layout/plate change): stage the plate at the
+sample (`--max-carry-tilt 0` load is fine in sim), then
+`PXRD_RECORD_CARRY=/path/out.json ros2 run pxrd_cell pick_place --source
+pxrd_sample --target table_top --plate v3 ...` until a green run records
+the carry; copy the JSON into `config/` and rebuild.
+
+Dead ends measured so far (don't retry): a single straight orientation-
+locked glide (joint-range disconnected); east-side tables (every family
+hits j1/j5 limits or sweeps the plate through the robot's own arm);
+corridor-inline raised tables (pick approach lands inside the arm's
+minimum-reach zone — 6 layouts eliminated by a parallel agent fleet);
+exact-flat manifold BFS on (j1, j5, posture) grids (no path — the real
+connector needs the ≤10° wiggle room).
+
 ## Plate revisions (`--plate`, PLATES dict in pick_place.py)
 
 | | v2 riser | v3 overhang |

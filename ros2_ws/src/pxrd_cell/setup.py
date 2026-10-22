@@ -21,7 +21,8 @@ setup(
             glob('meshes/dh_ag145/*.STL') + glob('meshes/dh_ag145/*.stl')),
         (os.path.join('share', package_name, 'launch'), glob('launch/*.py')),
         (os.path.join('share', package_name, 'config'),
-            glob('config/*.yaml') + glob('config/*.rviz') + glob('config/*.srdf')),
+            glob('config/*.yaml') + glob('config/*.rviz') + glob('config/*.srdf')
+            + glob('config/*.json')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,

@@ -23,6 +23,7 @@ Sequence:
  12. Retreat to hover above target
 """
 import argparse
+import json
 import math
 import os
 import sys
@@ -382,7 +383,10 @@ HOME_JOINTS = {
     # folded home pose faces the workspace the same way it did before the
     # mount-orientation fix. If robot_mount_yaw_deg changes, set j1 = -mount_yaw
     # (in rad) and re-verify in rviz.
-    "j1": 0.0,        # PXRD mount yaw 0 -> no j1 compensation
+    "j1": -0.35,      # yawed slightly WEST: with the pedestal shifted +0.15
+                      # east (flat-carry corner clearance, 2026-10-21) the
+                      # j1=0 home parks the hanging fingertip against the
+                      # SmartLab's east cabinet (measured contact).
     "j2": -1.1,       # shoulder, matches pickup wrist family
     "j3": 1.9,        # elbow, matches pickup wrist family
     "j4": -2.4,       # wrist roll — KEY for plate-flat orientation
@@ -570,7 +574,8 @@ def _check_tilt_gate(node, tilt_gate, trajectory):
 
 
 def _send_plan_validate_execute(node, mg_client, exec_client, goal,
-                                  timeout=90.0, tilt_gate=None):
+                                  timeout=90.0, tilt_gate=None,
+                                  traj_sink=None):
     """Plan-only via MoveGroup → validate against budgets → execute via
     ExecuteTrajectory if validated. This separates planning from execution
     so we can reject "crazy" trajectories BEFORE the arm moves."""
@@ -624,6 +629,8 @@ def _send_plan_validate_execute(node, mg_client, exec_client, goal,
     code = rfut.result().result.error_code.val
     if code != 1:
         return False, f"execute MoveItErrorCode {code}"
+    if traj_sink is not None:
+        traj_sink.append(trajectory.joint_trajectory)
     return True, info
 
 
@@ -897,6 +904,13 @@ def plan_arm_to_pose_via_ik(node, mg, ik_cli, scene_client,
 # it, IK sometimes lands in the mirrored wrist family where the measured
 # margins don't hold.
 STAGE_HINTS = {
+    # Legacy (v2-era validated) bay family. Its j1/j5 room points WEST —
+    # which is why the raised staging table lives WEST of the robot
+    # (flat-carry layout 2026-10-21). Eastward this family dies on the j1
+    # limit (-3.05) ~0.6 rad out; the east-capable mirror family (j1=+1.66,
+    # j3=-2.67, j5=-1.51) was probed but its carry needs a 256-degree wrist
+    # yaw that sweeps the plate through the robot's own upper arm — east
+    # placement is geometrically dead for ANY single flat-carry family.
     "pxrd_sample": {"j1": -2.44, "j2": -1.53, "j3": 2.57,
                     "j4": -1.04, "j5": 0.65, "j6": 1.57},
     # Probed at the table deposit pose: the only collision-free family
@@ -906,10 +920,184 @@ STAGE_HINTS = {
 }
 
 
+# Tucked carry posture (legacy family, canonical layout): IK-probed at the
+# bay-stage pose pulled radially in to r=0.45 m (85%), z unchanged. During
+# the carried j1 swing this keeps the plate nose at ~0.73 m from the base
+# axis — clear of the SmartLab cabinet's west corner (at 0.816 m) that the
+# full-radius arc grazes. j3 sits near its fold limit: do NOT tuck deeper.
+TUCK_CARRY = {"j2": -1.790, "j3": 2.803, "j4": -1.013}
+# Tucked-posture j1 differs from the stage j1 at the same bearing (shoulder
+# lean changes with the fold): bay-side tucked j1 = stage j1 + this trim.
+# The settle hop absorbs it (yaw-only + pitch-locked = still level).
+TUCK_J1_TRIM = -0.465
+# Extended posture for the wrist yaw (IK-probed, legacy family, r=0.60 m,
+# z=0.252): far enough out that the plate nose clears the robot's shoulder
+# while the pure-j5 yaw sweeps it through the inward heading.
+FLIP_POSTURE = {"j2": -1.502, "j3": 2.566, "j4": -1.064}
+
+
+def lerp_path(node, scene_client, exec_client, waypoints, vel=0.2,
+              tilt_gate=None, step_rad=0.02, traj_sink=None):
+    """Execute a DETERMINISTIC joint-space polyline through `waypoints`
+    (list of {joint: value} dicts), starting from the CURRENT state.
+
+    Every sampled state along every segment is collision-checked via
+    /check_state_validity, and the merged trajectory passes the FK tilt
+    gate before execution. Returns (ok, info). No avoidance — validation
+    only; a blocked segment means the caller should fall back to a planned
+    (OMPL) hop. The straight segments keep the flat hop decompositions
+    (pure yaw / pitch-locked) level the whole way.
+    """
+    from moveit_msgs.srv import GetStateValidity
+    import copy as _copy
+    current = get_current_robot_state(node, scene_client)
+    if current is None:
+        return False, "could not fetch current robot state"
+    cur = dict(zip(current.joint_state.name, current.joint_state.position))
+    names = ["j1", "j2", "j3", "j4", "j5", "j6"]
+    pts = [[cur[j] for j in names]]
+    for wp in waypoints:
+        pts.append([wp[j] for j in names])
+
+    if not hasattr(node, "_sv_client"):
+        node._sv_client = node.create_client(
+            GetStateValidity, "/check_state_validity")
+        node._sv_client.wait_for_service(timeout_sec=5.0)
+    sv = node._sv_client
+
+    def _valid(q_i):
+        st = _copy.deepcopy(current)
+        pos = list(st.joint_state.position)
+        for k, nm in enumerate(st.joint_state.name):
+            if nm in names:
+                pos[k] = q_i[names.index(nm)]
+        st.joint_state.position = pos
+        req = GetStateValidity.Request()
+        req.robot_state = st
+        req.group_name = "fairino10_v6_group"
+        fut = sv.call_async(req)
+        deadline = time.time() + 5.0
+        while not fut.done() and time.time() < deadline:
+            time.sleep(0.002)
+        res = fut.result() if fut.done() else None
+        if res is None:
+            return None
+        if not res.valid:
+            return {f"{c.contact_body_1}<->{c.contact_body_2}"
+                    for c in res.contacts}
+        return True
+
+    from trajectory_msgs.msg import JointTrajectoryPoint
+    from moveit_msgs.msg import RobotTrajectory
+    traj = RobotTrajectory()
+    traj.joint_trajectory.joint_names = names
+    v_joint = max(0.05, vel * 1.5)   # rad/s nominal, scaled by vel
+    t = 0.0
+    total_d = 0.0
+    # the trajectory ALWAYS starts at the exact current state at t=0 —
+    # controllers abort otherwise when the first real point is offset.
+    pt0 = JointTrajectoryPoint()
+    pt0.positions = list(pts[0])
+    traj.joint_trajectory.points.append(pt0)
+    for s_i in range(len(pts) - 1):
+        start, goal = pts[s_i], pts[s_i + 1]
+        max_d = max(abs(g - s) for s, g in zip(start, goal))
+        if max_d < 1e-4:
+            continue
+        n = max(2, int(math.ceil(max_d / step_rad)) + 1)
+        for i in range(n):
+            a = i / (n - 1)
+            if i == 0:
+                continue   # vertex already added (or it's the t=0 point)
+            q_i = [s + a * (g - s) for s, g in zip(start, goal)]
+            v = _valid(q_i)
+            if v is None:
+                return False, (f"lerp validity check timed out "
+                               f"(segment {s_i+1}/{len(pts)-1})")
+            if v is not True:
+                return False, (f"lerp blocked at segment {s_i+1}"
+                               f"/{len(pts)-1} {100.0*i/(n-1):.0f}%: "
+                               + (", ".join(sorted(v)[:3]) or "in collision"))
+            pt = JointTrajectoryPoint()
+            pt.positions = q_i
+            # strictly increasing time with a floor per step: near-zero-length
+            # bridge segments otherwise emit sub-ms-spaced points that abort
+            # the trajectory controller (CONTROL_FAILED -4).
+            t = max(t + 0.02, (total_d + a * max_d) / v_joint)
+            pt.time_from_start.sec = int(t)
+            pt.time_from_start.nanosec = int((t - int(t)) * 1e9)
+            traj.joint_trajectory.points.append(pt)
+        total_d += max_d
+
+    if len(traj.joint_trajectory.points) < 2:
+        return True, "already there (Δ<1e-4)"
+
+    ok, tilt_info = _check_tilt_gate(node, tilt_gate, traj)
+    if not ok:
+        return False, tilt_info
+
+    goal_msg = ExecuteTrajectory.Goal()
+    goal_msg.trajectory = traj
+    fut = exec_client.send_goal_async(goal_msg)
+    deadline = time.time() + 20.0
+    while not fut.done() and time.time() < deadline:
+        time.sleep(0.02)
+    h = fut.result() if fut.done() else None
+    if h is None or not h.accepted:
+        return False, "lerp execute rejected"
+    rfut = h.get_result_async()
+    deadline = time.time() + 180.0
+    while not rfut.done() and time.time() < deadline:
+        time.sleep(0.02)
+    if not rfut.done():
+        return False, "lerp execute timeout"
+    code = rfut.result().result.error_code.val
+    if code != 1:
+        return False, f"lerp execute MoveItErrorCode {code}"
+    if traj_sink is not None:
+        traj_sink.append(traj.joint_trajectory)
+    return True, (f"LERP {len(traj.joint_trajectory.points)}pts "
+                  f"({len(pts)-1} segs), Δ={total_d:.2f}rad, "
+                  f"traj_dur={t:.1f}s{tilt_info}")
+
+
+def lerp_hop(node, scene_client, exec_client, goal_joints, vel=0.2,
+             tilt_gate=None, step_rad=0.02, traj_sink=None):
+    """Single-goal wrapper around lerp_path."""
+    return lerp_path(node, scene_client, exec_client, [goal_joints],
+                     vel=vel, tilt_gate=tilt_gate, step_rad=step_rad,
+                     traj_sink=traj_sink)
+
+
+def _taught_carry_path(source, target):
+    """Load TAUGHT carry waypoints for (source -> target).
+
+    Looks for config/taught_carry_<source>__<target>.json; falls back to
+    the opposite direction file REVERSED (a time-reversed valid flat path
+    is itself valid and flat). Returns list of {joint: value} or None.
+    """
+    share = get_package_share_directory("pxrd_cell")
+    fwd = os.path.join(share, "config", f"taught_carry_{source}__{target}.json")
+    rev = os.path.join(share, "config", f"taught_carry_{target}__{source}.json")
+    if os.path.exists(fwd):
+        with open(fwd) as f:
+            data = json.load(f)
+        wps = data["waypoints"]
+    elif os.path.exists(rev):
+        with open(rev) as f:
+            data = json.load(f)
+        wps = list(reversed(data["waypoints"]))
+    else:
+        return None
+    names = data["joint_names"]
+    return [dict(zip(names, w)) for w in wps]
+
+
 def plan_side_stage(node, mg, ik_cli, scene_client, x, y, z, q,
                     vel=0.2, planning_time=15.0, planning_attempts=30,
                     planner_id="RRTConnect", exec_client=None, hint=None,
-                    j1_first=False, tilt_gate=None):
+                    j1_first=False, tilt_gate=None,
+                    source=None, target=None):
     """Two-hop staging for the side carry: OMPL reliably fails to connect the
     lifted-pick config to the stage config in one go (long j1 swing + posture
     change with a long plate attached). So: (1) solve IK for the stage pose,
@@ -938,38 +1126,173 @@ def plan_side_stage(node, mg, ik_cli, scene_client, x, y, z, q,
     if target_joints is None:
         return False, "IK failed (no collision-free solution at stage pose)"
     cur = dict(zip(current.joint_state.name, current.joint_state.position))
-    # Ladder of small deterministic hops. ORDER IS START-DEPENDENT:
-    #  from HOME (low, folded): posture FIRST — raising j2/j3 before the j1
-    #    swing keeps the hanging gripper out of the pedestal footprint.
+
+    # ── TAUGHT CARRY REPLAY ─────────────────────────────────────────────
+    # If a taught flat carry exists for this (source, target), replay it as
+    # a deterministic joint polyline: every sample collision-checked against
+    # the LIVE scene and the whole path FK-tilt-gated before execution. A
+    # taught path recorded in one direction serves the other REVERSED.
+    if tilt_gate is not None and source and target:
+        taught = _taught_carry_path(source, target)
+        if taught is not None:
+            node.get_logger().info(
+                f"   taught carry path found ({len(taught)} waypoints) — "
+                "replaying (live collision + tilt checked)")
+            ok, info = lerp_path(node, scene_client, exec_client,
+                                 taught + [target_joints],
+                                 vel=vel, tilt_gate=tilt_gate)
+            if ok:
+                return True, f"taught replay: {info}"
+            node.get_logger().warning(
+                f"   whole-path replay rejected ({info}) — retrying in "
+                "chunks")
+            # chunked replay: short executions sidestep controller aborts
+            # seen on long single-goal trajectories.
+            full = taught + [target_joints]
+            CH = 12
+            all_ok = True
+            for c0 in range(0, len(full), CH):
+                chunk = full[c0:c0 + CH]
+                ok, info = lerp_path(node, scene_client, exec_client, chunk,
+                                     vel=vel, tilt_gate=tilt_gate)
+                if not ok:
+                    all_ok = False
+                    node.get_logger().warning(
+                        f"   chunk {c0//CH+1} rejected ({info}) — falling "
+                        "back to the gated hop ladder")
+                    break
+            if all_ok:
+                return True, f"taught replay (chunked): {info}"
+
+    # ── Recording: set PXRD_RECORD_CARRY=/path/out.json to capture the
+    # executed carry (all hop trajectories, concatenated) for teaching. ──
+    record_path = os.environ.get("PXRD_RECORD_CARRY") \
+        if tilt_gate is not None else None
+    traj_sink = [] if record_path else None
+
+    # Hop ladder (VALIDATED order — used both empty-jawed and carrying).
+    # ORDER IS START-DEPENDENT:
+    #  from HOME (low, folded): posture FIRST — raising j2/j3 before the
+    #    j1 swing keeps the hanging gripper out of the pedestal footprint.
     #  from the BAY MOUTH (j1_first=True): j1 swing FIRST — re-posturing
     #    while still aimed at the instrument reaches into it (99999);
     #    swinging away in the current carry posture is safe.
+    # While CARRYING (tilt_gate armed) each hop is additionally:
+    #  - tried first as a straight joint-space LERP (deterministic, often
+    #    exactly level), falling back to OMPL when the segment is blocked;
+    #  - FK-tilt-gated with ITS OWN retry loop: OMPL only sometimes samples
+    #    a level path for a hop, but hops are short, so a handful of rolls
+    #    converges (measured) where one-shot whole-carry planning never
+    #    does (80 mining rolls: best 41.7 deg). The wrist re-wrap MUST be a
+    #    combined j4/j5/j6 hop — a pure-j5 yaw sweeps the plate through the
+    #    robot's own shoulder at table-pick radii.
+    # Hop ladder (legacy VALIDATED order, both empty-jawed and carrying).
+    # ORDER IS START-DEPENDENT:
+    #  from HOME: posture FIRST (low j1 swing parks the gripper in the
+    #  pedestal); from the BAY MOUTH (j1_first): swing away first.
+    # While carrying, each hop is tried as a straight LERP first and then
+    # as gated OMPL rolls — the FK tilt gate rejects any plan that would
+    # tip the plate, and retries explore until a level one is found.
     hops = []
     via = {j: cur[j] for j in ("j1", "j2", "j3", "j4", "j5", "j6")}
-    if j1_first:
-        via["j1"] = target_joints["j1"]
-        hops.append(("j1 swing (carry posture held)", dict(via)))
-        via["j2"] = target_joints["j2"]; via["j3"] = target_joints["j3"]
-        hops.append(("posture (j2/j3)", dict(via)))
+    if tilt_gate is not None:
+        # CARRYING — every hop LEVEL BY CONSTRUCTION (verified by the gate):
+        #  - pure j1: yaw about the base axis;
+        #  - posture {j2,j3,j4} together: start and target postures share
+        #    pitch-sum zero, so the straight lerp is pitch-locked AND lands
+        #    exactly on the target posture;
+        #  - pure j5: yaw about the (vertical) wrist axis — done at the OPEN
+        #    deck end, never at the bay mouth.
+        # Requires the pedestal_off_x=0.15 layout: the carried j1 swing arc
+        # then clears the SmartLab cabinet's west corner by ~10 cm (it
+        # GRAZES at 1 mm with the pedestal at x=0 — structurally, since the
+        # legacy family cannot fold below the stage radius).
+        # The wrist yaw happens at the BAY end: with the pedestal stepped
+        # back (off_z=0.70) the bay-mouth yaw circle clears the face by
+        # 4-14 cm, and the swing then runs with the DECK-family wrist so the
+        # plate nose TRAILS inboard — clearing the face mullions/pillars
+        # that an outward nose rakes at bearings 90-130 deg (measured).
+        if j1_first:
+            via["j5"] = target_joints["j5"]
+            hops.append(("wrist yaw (pure j5, bay mouth)", dict(via)))
+            via["j1"] = target_joints["j1"]
+            hops.append(("j1 swing (nose trailing)", dict(via)))
+            for j in ("j2", "j3", "j4"):
+                via[j] = target_joints[j]
+            hops.append(("posture j2/j3/j4 (pitch-locked)", dict(via)))
+        else:
+            for j in ("j2", "j3", "j4"):
+                via[j] = target_joints[j]
+            hops.append(("posture j2/j3/j4 (pitch-locked)", dict(via)))
+            via["j1"] = target_joints["j1"]
+            hops.append(("j1 swing (nose trailing)", dict(via)))
+            via["j5"] = target_joints["j5"]
+            hops.append(("wrist yaw (pure j5, bay mouth)", dict(via)))
+        hops.append(("settle stage config", dict(target_joints)))
     else:
-        via["j2"] = target_joints["j2"]; via["j3"] = target_joints["j3"]
-        hops.append(("posture (j2/j3)", dict(via)))
-        via["j1"] = target_joints["j1"]
-        hops.append(("j1 swing", dict(via)))
-    for j in ("j4", "j5", "j6"):
-        via[j] = target_joints[j]
-    hops.append(("wrist pre-orient", dict(via)))
-    hops.append(("settle stage config", dict(target_joints)))
+        if j1_first:
+            via["j1"] = target_joints["j1"]
+            hops.append(("j1 swing (carry posture held)", dict(via)))
+            via["j2"] = target_joints["j2"]; via["j3"] = target_joints["j3"]
+            hops.append(("posture (j2/j3)", dict(via)))
+        else:
+            via["j2"] = target_joints["j2"]; via["j3"] = target_joints["j3"]
+            hops.append(("posture (j2/j3)", dict(via)))
+            via["j1"] = target_joints["j1"]
+            hops.append(("j1 swing", dict(via)))
+        for j in ("j4", "j5", "j6"):
+            via[j] = target_joints[j]
+        hops.append(("wrist pre-orient", dict(via)))
+        hops.append(("settle stage config", dict(target_joints)))
     for i, (label, jgoal) in enumerate(hops):
         node.get_logger().info(f"   stage hop {i+1}/{len(hops)}: {label}")
-        ok, info = plan_arm_to_joints(node, mg, jgoal, vel=vel,
-                                      planning_time=planning_time,
-                                      planning_attempts=planning_attempts,
-                                      planner_id=planner_id,
-                                      exec_client=exec_client,
-                                      tilt_gate=tilt_gate)
+        if tilt_gate is not None:
+            ok, info = lerp_hop(node, scene_client, exec_client, jgoal,
+                                vel=vel, tilt_gate=tilt_gate,
+                                traj_sink=traj_sink)
+            if not ok:
+                node.get_logger().info(
+                    f"   hop lerp blocked ({info}) — gated OMPL rolls")
+                for roll in range(14):
+                    ok, info = plan_arm_to_joints(
+                        node, mg, jgoal, vel=vel,
+                        planning_time=planning_time,
+                        planning_attempts=planning_attempts,
+                        planner_id=planner_id, exec_client=exec_client,
+                        tilt_gate=tilt_gate, traj_sink=traj_sink)
+                    if ok:
+                        break
+                    node.get_logger().info(
+                        f"   hop roll {roll+1}/14 rejected: {info}")
+        else:
+            ok, info = plan_arm_to_joints(node, mg, jgoal, vel=vel,
+                                          planning_time=planning_time,
+                                          planning_attempts=planning_attempts,
+                                          planner_id=planner_id,
+                                          exec_client=exec_client,
+                                          tilt_gate=tilt_gate)
         if not ok:
             return False, f"stage hop {i+1} ({label}): {info}"
+
+    if record_path and traj_sink:
+        names = ["j1", "j2", "j3", "j4", "j5", "j6"]
+        wps = []
+        for jt in traj_sink:
+            idx = [list(jt.joint_names).index(n) for n in names]
+            for p in jt.points:
+                wps.append([p.positions[k] for k in idx])
+        # downsample: keep points at least 0.04 rad apart (always keep last)
+        slim = [wps[0]]
+        for w in wps[1:]:
+            if max(abs(a - b) for a, b in zip(w, slim[-1])) >= 0.04:
+                slim.append(w)
+        if slim[-1] != wps[-1]:
+            slim.append(wps[-1])
+        with open(record_path, "w") as f:
+            json.dump({"joint_names": names, "waypoints": slim,
+                       "source": source, "target": target}, f, indent=1)
+        node.get_logger().info(
+            f"   RECORDED carry: {len(slim)} waypoints -> {record_path}")
     return True, info
 
 
@@ -978,7 +1301,7 @@ def plan_arm_to_joints(node, mg, joint_values, vel=0.2, planning_time=5.0,
                        exec_client=None,
                        keep_orientation_along_path=False, orient_q=None,
                        base_frame="base_link", link="gripper_grasp_link",
-                       path_tilt_tol=0.3, tilt_gate=None):
+                       path_tilt_tol=0.3, tilt_gate=None, traj_sink=None):
     """Plan the arm group to a specific joint configuration (deterministic).
 
     Use this for "go to home" or any time you want the arm in a known config
@@ -1026,7 +1349,8 @@ def plan_arm_to_joints(node, mg, joint_values, vel=0.2, planning_time=5.0,
 
     if exec_client is not None:
         return _send_plan_validate_execute(node, mg, exec_client, goal,
-                                           tilt_gate=tilt_gate)
+                                           tilt_gate=tilt_gate,
+                                           traj_sink=traj_sink)
     goal.planning_options.plan_only = False
     return _send_and_wait(node, mg, goal)
 
@@ -1286,7 +1610,14 @@ def cartesian_move(node, cart_client, exec_client, base_frame, link,
     req.group_name = "fairino10_v6_group"
     req.link_name = link
     req.max_step = max_step
-    req.jump_threshold = 0.0          # no joint-jump check (we trust IK continuity)
+    # Enforce IK continuity: with 0.0 (no check) the follower can FLIP wrist
+    # family mid-path — the waypoints stay on the line but the arm teleports
+    # through a huge joint jump (seen on long flat-carry glides: path "valid"
+    # yet end config in a different family). The threshold is RELATIVE to the
+    # path's mean joint step: keep it loose (5.0) — family-flip teleports are
+    # 10x+ the mean, while a tight 2.0 false-positives on short few-point
+    # moves (it broke the validated 60mm back-off at 66.7%).
+    req.jump_threshold = 5.0
     req.avoid_collisions = True
     req.waypoints = [target]
 
@@ -1894,11 +2225,11 @@ def main():
                                    f"empty jaws at pinch height"):
                 fail("stage-outside (acquire) failed")
         else:
-            # Seed the pick IK with the ENCLOSED deck's stage family: the
-            # carry to the bay is a flat Cartesian glide, which cannot change
-            # wrist family mid-flight — so the pick must already be in the
-            # family the insert needs.
-            pick_hint = STAGE_HINTS.get(args.target) if tgt_enclosed else None
+            # Seed the pick IK with THIS deck's known-good family (the one
+            # that is flat-ladder-connectable to the bay family). Seeding
+            # with a far-away pose's config lets the distance metric pick
+            # the wrong elbow sign.
+            pick_hint = STAGE_HINTS.get(args.source)
             if not _run_phase(node, phases, f"approach behind {args.source} tab", "OMPL+IK",
                               lambda: plan_arm_to_pose_via_ik(
                                   node, mg, ik_client, get_scene_client,
@@ -2125,6 +2456,7 @@ def main():
         t_adv_y = ty - vy * PAD_OFFSET_FROM_TCP
         t_pz = tz + TAB_PINCH_Y + grab_dz   # release higher by the pinch offset
         t_carry = t_pz + 0.080
+
         # FLAT CARRY first: acquire and deposit share one orientation (both
         # decks' tabs point the same way), so the whole carry can be one
         # straight orientation-locked Cartesian segment — the plate stays
@@ -2142,12 +2474,16 @@ def main():
                                   vel=args.vel, planning_time=args.transit_time,
                                   planning_attempts=args.num_attempts,
                                   planner_id=args.planner, exec_client=exec_client,
+                                  # Seed the carry target IK at the deck's
+                                  # known flat-ladder-compatible family (same
+                                  # elbow/j6 signs as the bay carry family).
                                   hint=STAGE_HINTS.get(args.target),
                                   j1_first=src_enclosed,
-                                  tilt_gate=carry_gate),
+                                  tilt_gate=carry_gate,
+                                  source=args.source, target=args.target),
                               target=f"({t_adv_x:+.3f}, {t_adv_y:+.3f}, {t_carry:+.3f}) horizontal",
-                              method="staged ladder, branch-pinned, j1-first "
-                                     "from bay, tilt-gated"):
+                              method="staged ladder, current-family-seeded, "
+                                     "j1-first from bay, tilt-gated"):
                 fail("carry-above failed")
         if not _run_phase(node, phases, f"descend to place at {args.target}", "Cartesian",
                           lambda: cartesian_move(
@@ -2205,8 +2541,9 @@ def main():
                 planning_attempts=args.num_attempts,
                 planner_id=args.planner, exec_client=exec_client,
                 hint=STAGE_HINTS.get(args.target),
-                tilt_gate=carry_gate)
-            stage_method = "3-hop staged, branch-pinned, tilt-gated"
+                tilt_gate=carry_gate,
+                source=args.source, target=args.target)
+            stage_method = "taught replay if available, else gated ladder"
         else:
             stage_planner = lambda: plan_arm_to_pose_via_ik(
                 node, mg, ik_client, get_scene_client,
@@ -2230,6 +2567,7 @@ def main():
                                    f"opening, at insert height (free space)",
                               ompl=f"{args.planner}, {args.transit_time:.0f}s × {args.num_attempts}"):
                 fail("stage-outside failed")
+
 
         if not _run_phase(node, phases, f"insert into {args.target}", "Cartesian",
                           lambda: cartesian_move(
