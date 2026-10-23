@@ -1,0 +1,212 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://ros.org/wiki/xacro">
+  <!--
+    DH AG-95 gripper for the PXRD cell, wrapped to be a DROP-IN for the
+    AG-145 macro: same link/joint NAMES (gripper_base_link,
+    gripper_finger1_joint, gripper_finger1_finger_tip_link, ...,
+    gripper_grasp_link) so the SRDF collision masks, touch_links, and the
+    gripper controller all work unchanged. Kinematics and meshes come from
+    the vendored fairino-moveit2 dh_ag95_description (four-bar fingers,
+    all mimicking one actuated joint).
+
+    Conventions (MEASURED via FK over the vendored chain + meshes):
+      actuated joint gripper_finger1_joint: 0.0 = OPEN (95.2 mm between the
+      pad faces), +0.93 = closed (1.7 mm). Near-linear in between.
+      grasp_link_offset default 0.114 puts the pad CENTER 0.069 m ahead of
+      gripper_grasp_link along +Z — the SAME PAD_OFFSET_FROM_TCP as the
+      AG-145, so none of the tab-aiming constants change.
+      Unlike the AG-145, NOTHING extends beyond the pads toward the
+      workspace: the pads are the fingertips.
+
+    Mapping to the vendored names:
+      ag95_base_link            -> gripper_base_link
+      ag95_body                 -> gripper_body_link
+      left/right_outer_knuckle  -> gripper_finger{1,2}_knuckle_link
+      left/right_finger         -> gripper_finger{1,2}_finger_link
+      left/right_inner_knuckle  -> gripper_finger{1,2}_inner_knuckle_link
+      left/right_finger_pad     -> gripper_finger{1,2}_finger_tip_link
+  -->
+  <xacro:macro name="dh_ag95_gripper" params="prefix parent *origin grasp_link_offset:=0.114">
+
+    <xacro:property name="A1" value="${44.691*pi/180}"/>
+    <xacro:property name="A2" value="${(90-44.691)*pi/180}"/>
+
+    <joint name="${prefix}gripper_base_joint" type="fixed">
+      <parent link="${parent}"/>
+      <child link="${prefix}gripper_base_link"/>
+      <xacro:insert_block name="origin"/>
+    </joint>
+
+    <link name="${prefix}gripper_base_link">
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry><mesh filename="package://pxrd_cell/meshes/dh_ag95/base_link.stl" scale="0.001 0.001 0.001"/></geometry>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry><mesh filename="package://pxrd_cell/meshes/dh_ag95/base_link.stl" scale="0.001 0.001 0.001"/></geometry>
+      </collision>
+      <inertial>
+        <mass value="0.1"/>
+        <origin xyz="0 0 0.003"/>
+        <inertia ixx="1e-4" ixy="0" ixz="0" iyy="1e-4" iyz="0" izz="1e-4"/>
+      </inertial>
+    </link>
+
+    <joint name="${prefix}gripper_body_joint" type="fixed">
+      <origin xyz="-0.0405 -0.0143 0.0147" rpy="0 0 0"/>
+      <parent link="${prefix}gripper_base_link"/>
+      <child link="${prefix}gripper_body_link"/>
+    </joint>
+
+    <link name="${prefix}gripper_body_link">
+      <visual>
+        <origin xyz="0.0405 0.0143 -0.0147" rpy="0 0 0"/>
+        <geometry><mesh filename="package://pxrd_cell/meshes/dh_ag95/gripper_body.stl" scale="0.001 0.001 0.001"/></geometry>
+      </visual>
+      <collision>
+        <origin xyz="0.0405 0.0143 -0.0147" rpy="0 0 0"/>
+        <geometry><mesh filename="package://pxrd_cell/meshes/dh_ag95/gripper_body.stl" scale="0.001 0.001 0.001"/></geometry>
+      </collision>
+      <inertial>
+        <mass value="0.6"/>
+        <origin xyz="0.04 0.014 0.044"/>
+        <inertia ixx="1e-3" ixy="0" ixz="0" iyy="1e-3" iyz="0" izz="1e-3"/>
+      </inertial>
+    </link>
+
+    <!-- ===== finger link bodies (shared shapes, per-finger instances) ===== -->
+    <xacro:macro name="ag95_finger_links" params="prefix fnum">
+      <link name="${prefix}gripper_finger${fnum}_knuckle_link">
+        <visual>
+          <origin xyz="-0.036673 0.00875 -0.098336" rpy="0 0 0"/>
+          <geometry><mesh filename="package://pxrd_cell/meshes/dh_ag95/outer_knuckle.stl" scale="0.001 0.001 0.001"/></geometry>
+        </visual>
+        <collision>
+          <origin xyz="-0.036673 0.00875 -0.098336" rpy="0 0 0"/>
+          <geometry><mesh filename="package://pxrd_cell/meshes/dh_ag95/outer_knuckle.stl" scale="0.001 0.001 0.001"/></geometry>
+        </collision>
+        <inertial>
+          <mass value="0.03"/>
+          <origin xyz="0.0277 0.00875 0"/>
+          <inertia ixx="1e-5" ixy="0" ixz="0" iyy="1e-5" iyz="0" izz="1e-5"/>
+        </inertial>
+      </link>
+      <link name="${prefix}gripper_finger${fnum}_inner_knuckle_link">
+        <visual>
+          <origin xyz="-0.016 0.0254 -0.10586" rpy="0 0 0"/>
+          <geometry><mesh filename="package://pxrd_cell/meshes/dh_ag95/inner_knuckle.stl" scale="0.001 0.001 0.001"/></geometry>
+        </visual>
+        <collision>
+          <origin xyz="-0.016 0.0254 -0.10586" rpy="0 0 0"/>
+          <geometry><mesh filename="package://pxrd_cell/meshes/dh_ag95/inner_knuckle.stl" scale="0.001 0.001 0.001"/></geometry>
+        </collision>
+        <inertial>
+          <mass value="0.03"/>
+          <origin xyz="-0.0018 0.0254 0.029"/>
+          <inertia ixx="1e-5" ixy="0" ixz="0" iyy="1e-5" iyz="0" izz="1e-5"/>
+        </inertial>
+      </link>
+      <link name="${prefix}gripper_finger${fnum}_finger_link">
+        <visual>
+          <origin xyz="-0.091673 0.00875 -0.098336" rpy="0 0 0"/>
+          <geometry><mesh filename="package://pxrd_cell/meshes/dh_ag95/finger.stl" scale="0.001 0.001 0.001"/></geometry>
+        </visual>
+        <collision>
+          <origin xyz="-0.091673 0.00875 -0.098336" rpy="0 0 0"/>
+          <geometry><mesh filename="package://pxrd_cell/meshes/dh_ag95/finger.stl" scale="0.001 0.001 0.001"/></geometry>
+        </collision>
+        <inertial>
+          <mass value="0.03"/>
+          <origin xyz="-0.0138 0.00875 0.0073"/>
+          <inertia ixx="1e-5" ixy="0" ixz="0" iyy="1e-5" iyz="0" izz="1e-5"/>
+        </inertial>
+      </link>
+      <link name="${prefix}gripper_finger${fnum}_finger_tip_link">
+        <visual>
+          <origin xyz="-0.0705 0.0 -0.12056" rpy="0 0 0"/>
+          <geometry><mesh filename="package://pxrd_cell/meshes/dh_ag95/finger_pad.stl" scale="0.001 0.001 0.001"/></geometry>
+        </visual>
+        <collision>
+          <origin xyz="-0.0705 0.0 -0.12056" rpy="0 0 0"/>
+          <geometry><mesh filename="package://pxrd_cell/meshes/dh_ag95/finger_pad.stl" scale="0.001 0.001 0.001"/></geometry>
+        </collision>
+        <inertial>
+          <mass value="0.01"/>
+          <origin xyz="-0.0023 0 0.0078"/>
+          <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6"/>
+        </inertial>
+      </link>
+      <joint name="${prefix}gripper_finger${fnum}_finger_tip_joint" type="fixed">
+        <origin xyz="-0.021173 0.00875 0.022224" rpy="0 0 0"/>
+        <parent link="${prefix}gripper_finger${fnum}_finger_link"/>
+        <child link="${prefix}gripper_finger${fnum}_finger_tip_link"/>
+      </joint>
+    </xacro:macro>
+
+    <xacro:ag95_finger_links prefix="${prefix}" fnum="1"/>
+    <xacro:ag95_finger_links prefix="${prefix}" fnum="2"/>
+
+    <!-- ===== joints: finger 1 = vendored LEFT (the actuated side) ===== -->
+    <joint name="${prefix}gripper_finger1_joint" type="revolute">
+      <origin xyz="0.077173 0.00555 0.083636" rpy="0 ${-A1} 0"/>
+      <parent link="${prefix}gripper_body_link"/>
+      <child link="${prefix}gripper_finger1_knuckle_link"/>
+      <axis xyz="0 -1 0"/>
+      <limit lower="0.0" upper="0.93" velocity="2.1" effort="50"/>
+    </joint>
+    <joint name="${prefix}gripper_finger1_finger_joint" type="continuous">
+      <origin xyz="0.055 0 0" rpy="0 ${A1} 0"/>
+      <parent link="${prefix}gripper_finger1_knuckle_link"/>
+      <child link="${prefix}gripper_finger1_finger_link"/>
+      <axis xyz="0 1 0"/>
+      <limit velocity="2.1" effort="50"/>
+      <mimic joint="${prefix}gripper_finger1_joint" multiplier="1" offset="0"/>
+    </joint>
+    <joint name="${prefix}gripper_finger1_inner_knuckle_joint" type="continuous">
+      <origin xyz="0.0565 -0.0111 0.09116" rpy="0 ${A2} 0"/>
+      <parent link="${prefix}gripper_body_link"/>
+      <child link="${prefix}gripper_finger1_inner_knuckle_link"/>
+      <axis xyz="0 -1 0"/>
+      <limit velocity="2.1" effort="50"/>
+      <mimic joint="${prefix}gripper_finger1_joint" multiplier="1" offset="0"/>
+    </joint>
+
+    <!-- ===== joints: finger 2 = vendored RIGHT (mirror) ===== -->
+    <joint name="${prefix}gripper_finger2_joint" type="continuous">
+      <origin xyz="${0.077173-2*0.036673} ${0.00555+2*0.00875} 0.083636" rpy="0 ${-A1} ${pi}"/>
+      <parent link="${prefix}gripper_body_link"/>
+      <child link="${prefix}gripper_finger2_knuckle_link"/>
+      <axis xyz="0 -1 0"/>
+      <limit velocity="2.1" effort="50"/>
+      <mimic joint="${prefix}gripper_finger1_joint" multiplier="1" offset="0"/>
+    </joint>
+    <joint name="${prefix}gripper_finger2_finger_joint" type="continuous">
+      <origin xyz="0.055 0 0" rpy="0 ${A1} 0"/>
+      <parent link="${prefix}gripper_finger2_knuckle_link"/>
+      <child link="${prefix}gripper_finger2_finger_link"/>
+      <axis xyz="0 1 0"/>
+      <limit velocity="2.1" effort="50"/>
+      <mimic joint="${prefix}gripper_finger1_joint" multiplier="1" offset="0"/>
+    </joint>
+    <joint name="${prefix}gripper_finger2_inner_knuckle_joint" type="continuous">
+      <origin xyz="0.0245 0.0397 0.09116" rpy="0 ${A2} ${-pi}"/>
+      <parent link="${prefix}gripper_body_link"/>
+      <child link="${prefix}gripper_finger2_inner_knuckle_link"/>
+      <axis xyz="0 -1 0"/>
+      <limit velocity="2.1" effort="50"/>
+      <mimic joint="${prefix}gripper_finger1_joint" multiplier="1" offset="0"/>
+    </joint>
+
+    <!-- TCP (grasp_link) — SAME convention as the AG-145 macro: identity
+         orientation (gripper +Z = approach, +X = jaw-open axis), offset so
+         the pad center rides PAD_OFFSET_FROM_TCP (0.069) ahead. -->
+    <link name="${prefix}gripper_grasp_link"/>
+    <joint name="${prefix}gripper_grasp_joint" type="fixed">
+      <parent link="${prefix}gripper_base_link"/>
+      <child link="${prefix}gripper_grasp_link"/>
+      <origin xyz="0 0 ${grasp_link_offset}" rpy="0 0 0"/>
+    </joint>
+
+  </xacro:macro>
+</robot>

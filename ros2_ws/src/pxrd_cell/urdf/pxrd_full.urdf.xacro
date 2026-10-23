@@ -414,13 +414,30 @@
     </gazebo>
   </xacro:if>
 
-  <!-- ============ AG-145 Gripper attached to wrist3_link ============ -->
+  <!-- ============ Gripper attached to wrist3_link ============
+       gripper:=ag145 (default) | ag95. Both macros expose the SAME link and
+       joint names (gripper_finger1_joint actuated, gripper_grasp_link TCP,
+       finger/knuckle/tip link names), so controllers, SRDF masks and
+       touch_links work for either. Joint conventions differ:
+         ag145: 0.0 = open (145 mm), -0.65 = closed
+         ag95 : 0.0 = open (95.2 mm), +0.93 = closed
+       pick_place maps grip widths per gripper via its - -gripper flag. -->
+  <xacro:arg name="gripper" default="ag145"/>
   <xacro:if value="${'$(arg include_gripper)' == 'true'}">
-    <xacro:include filename="$(find pxrd_cell)/urdf/dh_ag145_macro.xacro"/>
-    <xacro:dh_ag145_gripper parent="wrist3_link" prefix="">
-      <origin xyz="$(arg gripper_mount_x) $(arg gripper_mount_y) $(arg gripper_mount_z)"
-              rpy="$(arg gripper_mount_roll) $(arg gripper_mount_pitch) $(arg gripper_mount_yaw)"/>
-    </xacro:dh_ag145_gripper>
+    <xacro:if value="${'$(arg gripper)' == 'ag145'}">
+      <xacro:include filename="$(find pxrd_cell)/urdf/dh_ag145_macro.xacro"/>
+      <xacro:dh_ag145_gripper parent="wrist3_link" prefix="">
+        <origin xyz="$(arg gripper_mount_x) $(arg gripper_mount_y) $(arg gripper_mount_z)"
+                rpy="$(arg gripper_mount_roll) $(arg gripper_mount_pitch) $(arg gripper_mount_yaw)"/>
+      </xacro:dh_ag145_gripper>
+    </xacro:if>
+    <xacro:if value="${'$(arg gripper)' == 'ag95'}">
+      <xacro:include filename="$(find pxrd_cell)/urdf/dh_ag95_macro.xacro"/>
+      <xacro:dh_ag95_gripper parent="wrist3_link" prefix="">
+        <origin xyz="$(arg gripper_mount_x) $(arg gripper_mount_y) $(arg gripper_mount_z)"
+                rpy="$(arg gripper_mount_roll) $(arg gripper_mount_pitch) $(arg gripper_mount_yaw)"/>
+      </xacro:dh_ag95_gripper>
+    </xacro:if>
   </xacro:if>
 
 </robot>

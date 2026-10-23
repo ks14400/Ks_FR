@@ -287,9 +287,33 @@ def tab_center_xy_in_base(node, buf, deck):
     tab_base = T_deck @ T_plate @ tab_local
     return float(tab_base[0]), float(tab_base[1])
 
-# Gripper limits (URDF): -0.65 closed, 0 open.
+# Gripper limits (URDF): per-gripper, selected with --gripper (apply_gripper).
 GRIPPER_OPEN = 0.0
 GRIPPER_CLOSED_JOINT = -0.65  # URDF lower limit = jaws fully closed
+
+# ============================================================
+# GRIPPER MODELS — selected with --gripper (default ag145). Both URDF macros
+# expose identical link/joint names; only the joint<->width mapping differs.
+#   ag145: 0.0 = open 145 mm (hardware-measured 148.7), -0.65 = closed
+#   ag95 : 0.0 = open 95.2 mm, +0.93 = closed (FK-measured from the vendored
+#          dh_ag95_description; pads ARE the fingertips — nothing extends
+#          beyond them, so every AG-145-era fingertip clearance has MORE
+#          margin on the AG-95)
+# Launch the sim with the matching gripper:=<name> xacro arg!
+# ============================================================
+GRIPPERS = {
+    "ag145": dict(stroke_mm=145.0, closed_joint=-0.65),
+    "ag95":  dict(stroke_mm=95.2,  closed_joint=0.93),
+}
+DEFAULT_GRIPPER = "ag145"
+
+
+def apply_gripper(name):
+    """Point the module-level gripper constants at one GRIPPERS entry."""
+    global GRIPPER_STROKE_MM, GRIPPER_CLOSED_JOINT
+    cfg = GRIPPERS[name]
+    GRIPPER_STROKE_MM = cfg["stroke_mm"]
+    GRIPPER_CLOSED_JOINT = cfg["closed_joint"]
 
 # AG-145 jaw opening at fully-open (100%), in mm. This is the calibration that
 # converts a desired jaw width (mm) to the gripper_finger1_joint value.
@@ -424,7 +448,7 @@ GRIPPER_LINKS = [
     "gripper_finger1_finger_link",     "gripper_finger2_finger_link",
     "gripper_finger1_inner_knuckle_link", "gripper_finger2_inner_knuckle_link",
     "gripper_finger1_knuckle_link",    "gripper_finger2_knuckle_link",
-    "gripper_base_link",
+    "gripper_base_link", "gripper_body_link",   # body_link: AG-95 only
 ]
 ARM_LINKS = [
     "base_link", "shoulder_link", "upperarm_link",
@@ -1945,9 +1969,10 @@ def main():
                         "extension into the enclosure instead of a wall-breaking "
                         "swing. Empty = use HOME. E.g. --via-joints "
                         "1.57,-1.3,2.2,-2.4,-1.571,0.1")
-    p.add_argument("--grip-value", type=float, default=-0.64,
-                   help="Gripper joint target when gripping (default -0.64, "
-                        "nearly fully closed). The AG-145 is FORCE-controlled: "
+    p.add_argument("--grip-value", type=float, default=None,
+                   help="Gripper joint target when gripping (default: 98.5%% "
+                        "of the selected gripper's closed value). "
+                        "The AG gripper is FORCE-controlled: "
                         "it closes toward this target and STOPS on the plate when "
                         "it meets resistance (force = gripper_force_pct on the "
                         "bridge). So this just needs to be tighter than the plate; "
@@ -2041,6 +2066,9 @@ def main():
                         "v2 = riser design (sim-validated 2026-09). "
                         "v3 = low overhang-tab design (check.STL 2026-10-20). "
                         f"Default {DEFAULT_PLATE}.")
+    p.add_argument("--gripper", choices=sorted(GRIPPERS), default=DEFAULT_GRIPPER,
+                   help="Gripper model (joint<->width mapping). MUST match the "
+                        f"sim's gripper:= xacro arg. Default {DEFAULT_GRIPPER}.")
     p.add_argument("--max-carry-tilt", type=float, default=10.0,
                    help="HARD tilt gate while the plate is held (deg, default "
                         "10). Every waypoint of every carried transit "
@@ -2053,7 +2081,13 @@ def main():
                         "tilt-gated while the plate is held.")
     args = p.parse_args()
 
-    # ── Plate revision: must be applied before any geometry is computed ──
+    # ── Gripper + plate: must be applied before any geometry is computed ──
+    apply_gripper(args.gripper)
+    if args.grip_value is None:
+        args.grip_value = 0.985 * GRIPPER_CLOSED_JOINT
+    print(f"[gripper] model {args.gripper}: stroke {GRIPPER_STROKE_MM:.1f}mm "
+          f"closed_joint {GRIPPER_CLOSED_JOINT:+.2f} grip_value "
+          f"{args.grip_value:+.3f}", file=sys.stderr)
     apply_plate(args.plate)
     print(f"[plate] revision {args.plate}: mesh={TABBED_PLATE_MESH} "
           f"tab_center_x={TAB_CENTER_X:+.4f} pinch_y={TAB_PINCH_Y:.4f} "

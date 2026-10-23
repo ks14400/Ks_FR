@@ -146,6 +146,27 @@ minimum-reach zone — 6 layouts eliminated by a parallel agent fleet);
 exact-flat manifold BFS on (j1, j5, posture) grids (no path — the real
 connector needs the ≤10° wiggle room).
 
+## Grippers (`--gripper` + `gripper:=` launch arg, GRIPPERS dict)
+
+Two DH grippers are modeled with IDENTICAL link/joint names (SRDF masks,
+touch_links and the controller work for either). The sim's `gripper:=` arg
+and pick_place's `--gripper` flag MUST match.
+
+| | AG-145 (default) | AG-95 |
+|---|---|---|
+| joint convention | 0.0 open (145mm) → −0.65 closed | 0.0 open (95.2mm) → +0.93 closed |
+| structure beyond the pads | ~37mm of fingertip (drove the v3 overhang design + 30mm gap cap) | **none — the pads are the tips** |
+| v3 round trip (sim) | validated | validated 2026-10-22 (both legs, 0 retries, carry 9.32°) |
+
+The AG-95 is geometrically SAFER here: nothing hangs below the pads, so
+every AG-145-era fingertip clearance has extra margin. The taught carry is
+arm-joint-only (gripper-agnostic); switching grippers changes the layout
+fingerprint, so the replay automatically runs the dense live collision
+check (~45 s extra) until the taught file is re-stamped for the adopted
+gripper. Hardware: the jaw-width calibration (`GRIPPERS` stroke) is
+FK-nominal — verify with `go_home --gripper-mm` + a caliper per gripper,
+and configure the matching DH gripper model on the Fairino pendant.
+
 ## Plate revisions (`--plate`, PLATES dict in pick_place.py)
 
 | | v2 riser | v3 overhang |

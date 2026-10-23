@@ -33,6 +33,7 @@ def launch_setup(context, *args, **kwargs):
 
     robot_model = LaunchConfiguration("robot_model").perform(context)
     control_mode = LaunchConfiguration("control_mode").perform(context)
+    gripper = LaunchConfiguration("gripper").perform(context)
     device_height = LaunchConfiguration("device_height").perform(context)
     yaw_deg = LaunchConfiguration("robot_mount_yaw_deg").perform(context)
     mount_x = LaunchConfiguration("robot_mount_x").perform(context)
@@ -81,6 +82,7 @@ def launch_setup(context, *args, **kwargs):
             mappings={
                 "robot_model": robot_model,
                 "control_mode": control_mode,
+                "gripper": gripper,
                 "device_height": device_height,
                 "robot_mount_yaw_deg": yaw_deg,
                 "robot_mount_x": mount_x,
@@ -283,6 +285,10 @@ def generate_launch_description():
                               description="Robot model: fr10, fr16, fr20"),
         DeclareLaunchArgument("control_mode", default_value="mock",
                               description="mock (default) | gazebo | hardware"),
+        DeclareLaunchArgument("gripper", default_value="ag145",
+                              description="Gripper model: ag145 (default) or "
+                                          "ag95. Run pick_place with the "
+                                          "matching --gripper flag."),
         DeclareLaunchArgument("device_height", default_value="1.21",
                               description="Height (m) of Unchained CAD origin above floor"),
         DeclareLaunchArgument("robot_mount_yaw_deg", default_value="0",

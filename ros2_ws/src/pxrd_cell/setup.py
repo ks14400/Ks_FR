@@ -19,6 +19,8 @@ setup(
             glob('meshes/*.stl') + glob('meshes/*.STL')),
         (os.path.join('share', package_name, 'meshes', 'dh_ag145'),
             glob('meshes/dh_ag145/*.STL') + glob('meshes/dh_ag145/*.stl')),
+        (os.path.join('share', package_name, 'meshes', 'dh_ag95'),
+            glob('meshes/dh_ag95/*.stl')),
         (os.path.join('share', package_name, 'launch'), glob('launch/*.py')),
         (os.path.join('share', package_name, 'config'),
             glob('config/*.yaml') + glob('config/*.rviz') + glob('config/*.srdf')

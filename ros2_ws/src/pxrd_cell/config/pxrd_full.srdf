@@ -70,6 +70,24 @@
   <disable_collisions link1="gripper_base_link" link2="wrist3_link" reason="Adjacent"/>
   <disable_collisions link1="gripper_base_link" link2="wrist2_link" reason="Never"/>
 
+  <!-- ============== AG-95 gripper variant (gripper:=ag95) ==============
+       Extra link gripper_body_link + the four-bar loop makes each finger
+       permanently contact its inner knuckle. Unknown-link entries are
+       ignored when the AG-145 is loaded. -->
+  <disable_collisions link1="gripper_body_link" link2="wrist3_link" reason="Never"/>
+  <disable_collisions link1="gripper_body_link" link2="gripper_base_link" reason="Adjacent"/>
+  <disable_collisions link1="gripper_body_link" link2="gripper_finger1_knuckle_link" reason="Adjacent"/>
+  <disable_collisions link1="gripper_body_link" link2="gripper_finger2_knuckle_link" reason="Adjacent"/>
+  <disable_collisions link1="gripper_body_link" link2="gripper_finger1_inner_knuckle_link" reason="Adjacent"/>
+  <disable_collisions link1="gripper_body_link" link2="gripper_finger2_inner_knuckle_link" reason="Adjacent"/>
+  <disable_collisions link1="gripper_body_link" link2="gripper_finger1_finger_link" reason="Never"/>
+  <disable_collisions link1="gripper_body_link" link2="gripper_finger2_finger_link" reason="Never"/>
+  <disable_collisions link1="gripper_body_link" link2="gripper_finger1_finger_tip_link" reason="Never"/>
+  <disable_collisions link1="gripper_body_link" link2="gripper_finger2_finger_tip_link" reason="Never"/>
+  <disable_collisions link1="gripper_finger1_finger_link" link2="gripper_finger1_inner_knuckle_link" reason="Four-bar loop"/>
+  <disable_collisions link1="gripper_finger2_finger_link" link2="gripper_finger2_inner_knuckle_link" reason="Four-bar loop"/>
+  <disable_collisions link1="table" link2="gripper_body_link" reason="Pick/place clearance"/>
+  <disable_collisions link1="the_plate" link2="gripper_body_link" reason="Allowed for grasp"/>
   <disable_collisions link1="gripper_base_link" link2="gripper_finger1_knuckle_link" reason="Adjacent"/>
   <disable_collisions link1="gripper_base_link" link2="gripper_finger2_knuckle_link" reason="Adjacent"/>
   <disable_collisions link1="gripper_base_link" link2="gripper_finger1_inner_knuckle_link" reason="Adjacent"/>
