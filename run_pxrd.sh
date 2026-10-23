@@ -7,10 +7,20 @@
 #   ./run_pxrd.sh retrieve    # PXRD -> table  (plate out of the instrument)
 #   ./run_pxrd.sh home        # arm to home
 #   ./run_pxrd.sh recover     # stranded-arm rescue (extract from bay + home)
+#   ./run_pxrd.sh hw-scene    # scene + MoveIt for the REAL robot
+#   ./run_pxrd.sh bridge      # hardware bridge to the FR10 (own terminal)
 #
 # Run `sim` in one terminal (keeps rviz open); load/retrieve/home/recover in
 # a second terminal. Domain isolation (43) is handled automatically.
 # Extra args after the verb are passed through to the underlying command.
+#
+# Hardware flow (three terminals; pendant override 25%, e-stop in hand):
+#   T1: ./run_pxrd.sh bridge                  # verify robot_ip first!
+#   T2: ./run_pxrd.sh hw-scene
+#   T3: ./run_pxrd.sh load --plate v3 --hardware
+# Before the first insertion: verify the paddle pinch with
+#   ros2 run pxrd_cell go_home --gripper-mm 30   (and measure the real gap)
+# and RE-TEACH the carry on real geometry (PXRD_RECORD_CARRY, see docs).
 # ============================================================
 set -e
 cd "$(dirname "$0")"
@@ -29,14 +39,30 @@ export ROS_DOMAIN_ID=43
 # collision+tilt-checked live each run; the tilt gate (--max-carry-tilt 10)
 # guarantees the plate top face never tips, measured 9.3 deg max.
 SIM_ARGS="tall_pedestal:=true pedestal_off_z:=0.70 pedestal_off_x:=0.15 pedestal_off_y:=-0.2 table_x:=-0.5 table_y:=-0.9 table_h:=0.5"
-# Canonical validated motion flags.
-RUN_FLAGS="--planner RRTConnect --place-lift 0.005 --transit-time 20"
+# Canonical validated motion flags. place-lift 0.002 (2026-10-22): the plate
+# seats 3 mm lower than the v2-era 0.005 — firmer set-down on the sample
+# stage (same change the unchained cell needed on hardware). The deep-reach
+# singularity that motivated 0.005 is gone at the stepped-back pedestal.
+RUN_FLAGS="--planner RRTConnect --place-lift 0.002 --transit-time 20"
+
+# Hardware: same world as sim (geometry comes from the launch defaults), the
+# bridge executes trajectories on the real FR10. VERIFY robot_ip on the
+# pendant before first use. movej_vel_pct 3 for bring-up (repo rule: <=5
+# near the instrument).
+HW_SCENE_ARGS="control_mode:=hardware $SIM_ARGS"
+BRIDGE_ARGS="robot_ip:=192.168.58.2 robot_model:=fr10 movej_vel_pct:=3 movej_acc_pct:=5 gripper_force_pct:=30"
 
 cmd="${1:-sim}"; shift || true
 case "$cmd" in
   sim)
     ./ros2_ws/clean_sim.sh || true
     exec ros2 launch pxrd_cell pxrd_full.launch.py $SIM_ARGS "$@"
+    ;;
+  hw-scene)
+    exec ros2 launch pxrd_cell pxrd_full.launch.py $HW_SCENE_ARGS "$@"
+    ;;
+  bridge)
+    exec ros2 launch pxrd_cell bridge.launch.py $BRIDGE_ARGS "$@"
     ;;
   load)
     exec ros2 run pxrd_cell pick_place --source table_top --target pxrd_sample $RUN_FLAGS "$@"
@@ -51,7 +77,7 @@ case "$cmd" in
     exec ros2 run pxrd_cell recover "$@"
     ;;
   *)
-    echo "usage: $0 {sim|load|retrieve|home|recover} [extra args]" >&2
+    echo "usage: $0 {sim|load|retrieve|home|recover|hw-scene|bridge} [extra args]" >&2
     exit 2
     ;;
 esac

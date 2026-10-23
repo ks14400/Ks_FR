@@ -210,15 +210,36 @@ Two validated answers to "the AG-145 fingertip extends far below the pads":
   capped at 30 mm (see Plate revisions). Flat parallel pinch faces ≥35 mm
   long; 15 mm thickness is comfortable at a 30 mm gap (7.5 mm per side).
 
-## Hardware bring-up TODO
+## Hardware mode (wired 2026-10-22 — NOT yet run on the real FR10)
 
-1. Bridge works unchanged (`fr_bridge`, cell-agnostic — proven on unchained).
-2. Add a `bridge.launch.py` + `control_mode:=hardware` path mirroring
-   `unchained_cell` (copy the pattern; FR10 IP + pendant at low speed).
-3. First runs: `--hardware`, bridge `movej_vel_pct` ≤ 5, pendant override 25%.
-4. Physical plate must match the chosen revision (`tabbed_plate_v2.STL` or
-   `check.STL` v3 — pass the matching `--plate`); verify the paddle pinch
-   with `go_home --gripper-mm` calibration before any insertion. For v3 the
-   fingertip-vs-table margin is only +2.5 mm at a commanded 30 mm gap —
-   re-derive it with the REAL aperture calibration (hardware open = 148.7 mm
-   on the unchained AG-145, not the nominal 145) before the first table pick.
+Mirrors the hardware-proven unchained pattern: the same code and world run
+against the real robot; only the executor changes. Three terminals, each on
+domain 43 (`source ros2_ws/env_pxrd.sh`), pendant override 25%, e-stop in
+hand:
+
+```bash
+# T1 — SDK bridge to the real FR10 (VERIFY robot_ip on the pendant first;
+#      defaults: robot_model:=fr10, movej_vel_pct:=3, MoveJ per-waypoint)
+./run_pxrd.sh bridge
+# T2 — scene + MoveIt against the real robot (same canonical world as sim)
+./run_pxrd.sh hw-scene
+# T3 — identical commands to sim, plus --hardware
+./run_pxrd.sh load --plate v3 --hardware
+```
+
+First-run checklist (in order):
+1. Physical layout must match the canonical args: pedestal stepped back to
+   off_z 0.70 and east to off_x 0.15 (the flat carry depends on it — see
+   the FLAT CARRY section), table at (-0.5, -0.9), top 0.5 m.
+2. Verify the jaw aperture: `ros2 run pxrd_cell go_home --gripper-mm 30`,
+   measure the real gap. For v3 the fingertip-vs-table margin is only
+   +2.5 mm at a commanded 30 mm — re-derive with the real calibration
+   (the unchained AG-145 opens 148.7 mm, not the nominal 145).
+3. RE-TEACH the carry on real geometry before trusting the replay: stage
+   the plate, then `PXRD_RECORD_CARRY=/path/out.json ./run_pxrd.sh retrieve
+   --plate v3 --hardware` until a green run records; copy into `config/`
+   and rebuild. The sim-taught path will be rejected automatically (layout
+   fingerprint mismatch triggers the dense live collision check), but the
+   gated-ladder fallback is slower and nondeterministic — teach early.
+4. Keep bridge `movej_vel_pct` ≤ 5 near the instrument (repo rule); raise
+   only after the full round trip is hardware-verified.
