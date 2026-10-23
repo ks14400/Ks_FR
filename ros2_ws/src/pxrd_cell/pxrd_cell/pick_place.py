@@ -597,6 +597,99 @@ def _check_tilt_gate(node, tilt_gate, trajectory):
     return True, f", tilt≤{tilt:.1f}°"
 
 
+# Keep each executed sub-trajectory comfortably under the shared bridge's
+# budget gate (BRIDGE_MAX_TOTAL_TRAVEL_RAD=8, BRIDGE_MAX_SINGLE_JOINT_RAD=4).
+CHUNK_TOTAL_RAD = 6.5
+CHUNK_SINGLE_RAD = 3.5
+
+
+def _execute_one_traj(node, exec_client, jtraj, timeout=None):
+    """Execute a single JointTrajectory via ExecuteTrajectory; wait for it."""
+    from moveit_msgs.msg import RobotTrajectory
+    rt = RobotTrajectory()
+    rt.joint_trajectory = jtraj
+    exec_goal = ExecuteTrajectory.Goal()
+    exec_goal.trajectory = rt
+    fut = exec_client.send_goal_async(exec_goal)
+    deadline = time.time() + 15.0
+    while not fut.done() and time.time() < deadline:
+        time.sleep(0.02)
+    h = fut.result() if fut.done() else None
+    if h is None or not h.accepted:
+        return False, "execute rejected"
+    rfut = h.get_result_async()
+    deadline = time.time() + (timeout or EXEC_RESULT_TIMEOUT)
+    while not rfut.done() and time.time() < deadline:
+        time.sleep(0.02)
+    if not rfut.done():
+        return False, "execute timeout"
+    code = rfut.result().result.error_code.val
+    if code != 1:
+        return False, f"execute MoveItErrorCode {code}"
+    return True, "ok"
+
+
+def _execute_traj_chunked(node, exec_client, jtraj):
+    """Execute a JointTrajectory, splitting it into sub-budget chunks so the
+    shared bridge's per-goal travel gate never rejects a large move. Chunks
+    are consecutive point ranges whose cumulative total / single-joint travel
+    stays under CHUNK_*; each is re-timed from zero. One pass when the whole
+    trajectory already fits."""
+    pts = jtraj.points
+    if len(pts) < 2:
+        return True, "ok"
+    names = list(jtraj.joint_names)
+    nj = len(names)
+
+    def travel(a, b):
+        tot = 0.0; per = [0.0] * nj
+        for i in range(a + 1, b + 1):
+            for j in range(nj):
+                d = abs(pts[i].positions[j] - pts[i - 1].positions[j])
+                tot += d; per[j] += d
+        return tot, (max(per) if per else 0.0)
+
+    tot_all, _ = travel(0, len(pts) - 1)
+    if tot_all <= CHUNK_TOTAL_RAD:
+        return _execute_one_traj(node, exec_client, jtraj)
+
+    # Build chunk boundaries greedily.
+    bounds = []
+    start = 0
+    i = 0
+    while i < len(pts) - 1:
+        # extend [start..i+1] while under budget
+        t, s = travel(start, i + 1)
+        if (t > CHUNK_TOTAL_RAD or s > CHUNK_SINGLE_RAD) and i > start:
+            bounds.append((start, i)); start = i
+        else:
+            i += 1
+    bounds.append((start, len(pts) - 1))
+
+    node.get_logger().info(
+        f"   large move ({tot_all:.1f} rad) > bridge budget — executing in "
+        f"{len(bounds)} chunks")
+    from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+    for k, (a, b) in enumerate(bounds):
+        sub = JointTrajectory(); sub.joint_names = names
+        t0 = pts[a].time_from_start.sec + pts[a].time_from_start.nanosec * 1e-9
+        for idx in range(a, b + 1):
+            p = JointTrajectoryPoint()
+            p.positions = list(pts[idx].positions)
+            if pts[idx].velocities:
+                p.velocities = list(pts[idx].velocities)
+            rel = (pts[idx].time_from_start.sec
+                   + pts[idx].time_from_start.nanosec * 1e-9) - t0
+            rel = max(rel, 0.0)
+            p.time_from_start.sec = int(rel)
+            p.time_from_start.nanosec = int((rel - int(rel)) * 1e9)
+            sub.points.append(p)
+        ok, info = _execute_one_traj(node, exec_client, sub)
+        if not ok:
+            return False, f"chunk {k+1}/{len(bounds)}: {info}"
+    return True, "ok"
+
+
 def _send_plan_validate_execute(node, mg_client, exec_client, goal,
                                   timeout=90.0, tilt_gate=None,
                                   traj_sink=None):
@@ -634,43 +727,42 @@ def _send_plan_validate_execute(node, mg_client, exec_client, goal,
         return False, tilt_info
     info += tilt_info
 
-    # Validated — execute via ExecuteTrajectory action
-    exec_goal = ExecuteTrajectory.Goal()
-    exec_goal.trajectory = trajectory
-    fut = exec_client.send_goal_async(exec_goal)
-    deadline = time.time() + timeout
-    while not fut.done() and time.time() < deadline:
-        time.sleep(0.02)
-    h = fut.result() if fut.done() else None
-    if h is None or not h.accepted:
-        return False, "execute rejected"
-    rfut = h.get_result_async()
-    deadline = time.time() + timeout
-    while not rfut.done() and time.time() < deadline:
-        time.sleep(0.02)
-    if not rfut.done():
-        return False, "execute timeout"
-    code = rfut.result().result.error_code.val
-    if code != 1:
-        return False, f"execute MoveItErrorCode {code}"
+    # Validated — execute. A single trajectory whose total joint travel
+    # exceeds the shared bridge's safety budget (8 rad total / 4 rad single
+    # joint) is REJECTED whole by the bridge on hardware (CONTROL_FAILED -4).
+    # Split it into sub-budget chunks executed back-to-back; one clean goal
+    # in sim (where the budget gate is not active).
+    ok, einfo = _execute_traj_chunked(node, exec_client,
+                                      trajectory.joint_trajectory)
+    if not ok:
+        return False, einfo
     if traj_sink is not None:
         traj_sink.append(trajectory.joint_trajectory)
     return True, info
 
 
-def _send_and_wait(node, client, goal, timeout=90.0):
+# Execution wait ceiling. Only matters when a result NEVER arrives (true
+# hang) — on normal completion OR abort the action returns immediately and
+# we exit the loop. 90s was too short for slow hardware moves (e.g. a big
+# home sweep at movej_vel_pct 3): the arm physically reached the goal but
+# the wait expired and false-reported "timeout". Generous ceiling fixes that
+# without hurting sim (sim results arrive in seconds).
+EXEC_RESULT_TIMEOUT = 600.0
+
+
+def _send_and_wait(node, client, goal, timeout=EXEC_RESULT_TIMEOUT):
     """Send a MoveGroup action goal and wait synchronously.
     Background executor handles the response callbacks while we block here.
     On success, returns details including joint_travel score."""
     fut = client.send_goal_async(goal)
-    deadline = time.time() + timeout
+    deadline = time.time() + 15.0           # goal ACCEPTANCE is fast
     while not fut.done() and time.time() < deadline:
         time.sleep(0.02)
     h = fut.result() if fut.done() else None
     if h is None or not h.accepted:
         return False, "rejected"
     rfut = h.get_result_async()
-    deadline = time.time() + timeout
+    deadline = time.time() + timeout         # EXECUTION may be slow on hw
     while not rfut.done() and time.time() < deadline:
         time.sleep(0.02)
     if not rfut.done():
@@ -1102,24 +1194,11 @@ def lerp_path(node, scene_client, exec_client, waypoints, vel=0.2,
         if not ok:
             return False, tilt_info
 
-    goal_msg = ExecuteTrajectory.Goal()
-    goal_msg.trajectory = traj
-    fut = exec_client.send_goal_async(goal_msg)
-    deadline = time.time() + 20.0
-    while not fut.done() and time.time() < deadline:
-        time.sleep(0.02)
-    h = fut.result() if fut.done() else None
-    if h is None or not h.accepted:
-        return False, "lerp execute rejected"
-    rfut = h.get_result_async()
-    deadline = time.time() + 180.0
-    while not rfut.done() and time.time() < deadline:
-        time.sleep(0.02)
-    if not rfut.done():
-        return False, "lerp execute timeout"
-    code = rfut.result().result.error_code.val
-    if code != 1:
-        return False, f"lerp execute MoveItErrorCode {code}"
+    # Execute in bridge-budget chunks (a long carry exceeds the shared
+    # bridge's 8-rad per-goal cap and would be rejected whole on hardware).
+    ok, einfo = _execute_traj_chunked(node, exec_client, traj.joint_trajectory)
+    if not ok:
+        return False, f"lerp {einfo}"
     if traj_sink is not None:
         traj_sink.append(traj.joint_trajectory)
     return True, (f"LERP {len(traj.joint_trajectory.points)}pts "
@@ -1184,7 +1263,16 @@ def _layout_fingerprint(node, scene_client):
             time.sleep(0.01)
         if not fut.done() or not fut.result().values:
             return None
-        h.update(fut.result().values[0].string_value.encode())
+        urdf = fut.result().values[0].string_value
+        # Strip the <ros2_control> and <gazebo> blocks: they differ between
+        # mock/gazebo/hardware control modes but DON'T change collision
+        # geometry. Without this a sim-taught path's fingerprint never matches
+        # on hardware, forcing the slow dense re-check every carry.
+        import re as _re
+        urdf = _re.sub(r"<ros2_control\b.*?</ros2_control>", "", urdf,
+                       flags=_re.DOTALL)
+        urdf = _re.sub(r"<gazebo\b.*?</gazebo>", "", urdf, flags=_re.DOTALL)
+        h.update(urdf.encode())
     except Exception:
         return None
     try:

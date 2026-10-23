@@ -7,6 +7,7 @@
 #   ./run_pxrd.sh retrieve    # PXRD -> table  (plate out of the instrument)
 #   ./run_pxrd.sh home        # arm to home
 #   ./run_pxrd.sh recover     # stranded-arm rescue (extract from bay + home)
+#   ./run_pxrd.sh preflight   # FR10 -> MANUAL mode + enabled (run ONCE, no bridge)
 #   ./run_pxrd.sh hw-scene    # scene + MoveIt for the REAL robot
 #   ./run_pxrd.sh bridge      # hardware bridge to the FR10 (own terminal)
 #
@@ -14,7 +15,9 @@
 # a second terminal. Domain isolation (43) is handled automatically.
 # Extra args after the verb are passed through to the underlying command.
 #
-# Hardware flow (three terminals; pendant override 25%, e-stop in hand):
+# Hardware flow (pendant override 25%, e-stop in hand):
+#   preflight: ./run_pxrd.sh preflight        # ONCE, bridge stopped — sets
+#              the FR10 to MANUAL mode (SDK MoveJ only runs in manual) + enable
 #   T1: ./run_pxrd.sh bridge                  # verify robot_ip first!
 #   T2: ./run_pxrd.sh hw-scene
 #   T3: ./run_pxrd.sh load --plate v3 --hardware
@@ -50,13 +53,22 @@ RUN_FLAGS="--planner RRTConnect --place-lift 0.002 --transit-time 20"
 # pendant before first use. movej_vel_pct 3 for bring-up (repo rule: <=5
 # near the instrument).
 HW_SCENE_ARGS="control_mode:=hardware $SIM_ARGS"
-BRIDGE_ARGS="robot_ip:=192.168.58.2 robot_model:=fr10 movej_vel_pct:=3 movej_acc_pct:=5 gripper_force_pct:=30"
+# gripper_enable:=false — no gripper on the FR10 yet (avoids the phantom
+# AG-145 activation error). The bridge code is the UNMODIFIED shared
+# fr_bridge; manual-mode is handled by the `preflight` verb below, never in
+# the bridge (which the unchained cell also runs).
+BRIDGE_ARGS="robot_ip:=192.168.58.2 robot_model:=fr10 movej_vel_pct:=20 movej_acc_pct:=30 gripper_enable:=false"
 
 cmd="${1:-sim}"; shift || true
 case "$cmd" in
   sim)
     ./ros2_ws/clean_sim.sh || true
     exec ros2 launch pxrd_cell pxrd_full.launch.py $SIM_ARGS "$@"
+    ;;
+  preflight)
+    # Put the FR10 in MANUAL mode + enabled (SDK MoveJ needs manual mode).
+    # Run ONCE with the bridge stopped, before `bridge`. No arm motion.
+    exec python3 "$(dirname "$0")/scripts/pxrd_hw_preflight.py" "$@"
     ;;
   hw-scene)
     exec ros2 launch pxrd_cell pxrd_full.launch.py $HW_SCENE_ARGS "$@"
@@ -77,7 +89,7 @@ case "$cmd" in
     exec ros2 run pxrd_cell recover "$@"
     ;;
   *)
-    echo "usage: $0 {sim|load|retrieve|home|recover|hw-scene|bridge} [extra args]" >&2
+    echo "usage: $0 {sim|load|retrieve|home|recover|preflight|hw-scene|bridge} [extra args]" >&2
     exit 2
     ;;
 esac

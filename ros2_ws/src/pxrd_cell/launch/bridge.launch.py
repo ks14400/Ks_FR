@@ -1,28 +1,24 @@
 """
 PXRD bridge launch — ONLY the sdk_executor that talks to the real FR10.
 
-Mirrors unchained_cell/launch/bridge.launch.py (the hardware-proven
-pattern); the fr_bridge package is cell-agnostic. This launch loads no
-URDF, MoveIt, or rviz. Its sole job is the SDK bridge that:
+Mirrors unchained_cell/launch/bridge.launch.py EXACTLY (the hardware-proven
+pattern); the fr_bridge package is cell-agnostic and UNMODIFIED. This launch
+passes only the parameters the stock bridge accepts — it adds nothing.
 
-  - Receives FollowJointTrajectory goals from any orchestrator
-  - Streams them to the real FR10 via the Fairino SDK (ServoJ or MoveJ)
-  - Publishes /joint_states from real encoders at 50 Hz
-  - Exposes /stop_motion service for emergency halt
-
-DANGER — once this launch is running, ANY node that sends a
-FollowJointTrajectory goal can move the real robot. Keep the e-stop in
-hand, pendant override low (25%), and movej_vel_pct <= 5 near the
-instrument (repo rule).
+The robot must be in MANUAL mode for SDK MoveJ to execute (verified against
+the FR16, which runs in manual). That is a ROBOT-side setting, handled
+PXRD-side BEFORE launching this bridge by:
+    ./run_pxrd.sh preflight     (sets Mode(1)+enable over the SDK, no motion)
+or by setting Manual mode in the WebApp. It is NOT done in the shared bridge.
 
 Usage (three terminals, domain 43 each — source ros2_ws/env_pxrd.sh):
-    # T1 — bridge to the real robot (slow defaults for first tests)
-    ./run_pxrd.sh bridge                 # robot_ip:=... to override
-
+    # ONCE (bridge stopped): put the FR10 in manual + enabled
+    ./run_pxrd.sh preflight
+    # T1 — bridge to the real robot
+    ./run_pxrd.sh bridge
     # T2 — scene + MoveIt against the real robot
     ./run_pxrd.sh hw-scene
-
-    # T3 — the same pick_place as sim, plus --hardware
+    # T3 — same pick_place as sim, plus --hardware
     ./run_pxrd.sh load --plate v3 --hardware
 """
 from launch import LaunchDescription
@@ -38,6 +34,7 @@ def launch_setup(context, *args, **kwargs):
     movej_vel = LaunchConfiguration("movej_vel_pct").perform(context)
     movej_acc = LaunchConfiguration("movej_acc_pct").perform(context)
     js_rate = LaunchConfiguration("joint_state_rate_hz").perform(context)
+    gripper_enable = LaunchConfiguration("gripper_enable").perform(context)
     gripper_vel = LaunchConfiguration("gripper_vel_pct").perform(context)
     gripper_force = LaunchConfiguration("gripper_force_pct").perform(context)
 
@@ -56,6 +53,7 @@ def launch_setup(context, *args, **kwargs):
             {"movej_vel_pct": float(movej_vel)},
             {"movej_acc_pct": float(movej_acc)},
             {"use_servoj": use_servoj.lower() == "true"},
+            {"gripper_enable": gripper_enable.lower() == "true"},
             {"gripper_vel_pct": float(gripper_vel)},
             {"gripper_force_pct": float(gripper_force)},
         ],
@@ -73,7 +71,6 @@ def generate_launch_description():
         DeclareLaunchArgument("robot_model", default_value="fr10",
                               description="Robot model: fr10, fr16, fr20. "
                                           "Determines the controller name suffix."),
-        # ─── First-test defaults: VERY SLOW ───
         DeclareLaunchArgument("use_servoj", default_value="false",
                               description="true: ServoJ streams the exact MoveIt "
                                           "trajectory (production). false: MoveJ "
@@ -86,11 +83,14 @@ def generate_launch_description():
                               description="MoveJ acceleration %% of robot max."),
         DeclareLaunchArgument("joint_state_rate_hz", default_value="50.0",
                               description="Joint-state poll/publish rate."),
+        DeclareLaunchArgument("gripper_enable", default_value="false",
+                              description="Run the AG-145 activation ritual. "
+                                          "Default FALSE for the FR10 (no gripper "
+                                          "mounted yet) — avoids the phantom "
+                                          "gripper error."),
         DeclareLaunchArgument("gripper_vel_pct", default_value="30.0",
                               description="AG-145 jaw speed (%% of max)."),
         DeclareLaunchArgument("gripper_force_pct", default_value="20.0",
-                              description="AG-145 grip FORCE (%% of max) — the "
-                                          "real grasp knob; the gripper stalls on "
-                                          "the paddle at this force."),
+                              description="AG-145 grip FORCE (%% of max)."),
         OpaqueFunction(function=launch_setup),
     ])
