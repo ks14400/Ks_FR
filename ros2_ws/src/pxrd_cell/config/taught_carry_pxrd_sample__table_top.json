@@ -1002,5 +1002,7 @@
   ]
  ],
  "source": "pxrd_sample",
- "target": "table_top"
+ "target": "table_top",
+ "max_tilt_deg": 9.33,
+ "layout_fingerprint": "360075956f59ac6417eb48dde5333abbc9700b847fa2870e3537a02c38545776"
 }

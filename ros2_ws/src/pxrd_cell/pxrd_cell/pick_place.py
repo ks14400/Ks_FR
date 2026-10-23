@@ -884,8 +884,17 @@ def plan_arm_to_pose_via_ik(node, mg, ik_cli, scene_client,
         ik_state.joint_state.position = pos
         node.get_logger().info("   pose IK seeded from hint family "
                                + ", ".join(f"{k}={v:+.2f}" for k, v in hint.items()))
-    target_joints, ik_delta = compute_ik_best_of_many(
-        node, ik_cli, base, link, x, y, z, q, ik_state, group=group)
+    target_joints = None
+    if hint is not None:
+        # hint-first shortcut: one collision-aware IK call from the exact
+        # hint seed; the 63-seed grid (~18 s) only runs if this fails.
+        target_joints = compute_ik(node, ik_cli, base, link, x, y, z, q,
+                                   ik_state, group=group)
+        if target_joints is not None:
+            node.get_logger().info("   hint-seed IK valid — grid skipped")
+    if target_joints is None:
+        target_joints, ik_delta = compute_ik_best_of_many(
+            node, ik_cli, base, link, x, y, z, q, ik_state, group=group)
     if target_joints is None:
         return False, "IK failed (no collision-free solution at the requested pose)"
     return plan_arm_to_joints(node, mg, target_joints, vel=vel,
@@ -937,7 +946,8 @@ FLIP_POSTURE = {"j2": -1.502, "j3": 2.566, "j4": -1.064}
 
 
 def lerp_path(node, scene_client, exec_client, waypoints, vel=0.2,
-              tilt_gate=None, step_rad=0.02, traj_sink=None):
+              tilt_gate=None, step_rad=0.02, traj_sink=None,
+              trusted_tilt=None, sparse_check=False):
     """Execute a DETERMINISTIC joint-space polyline through `waypoints`
     (list of {joint: value} dicts), starting from the CURRENT state.
 
@@ -965,7 +975,7 @@ def lerp_path(node, scene_client, exec_client, waypoints, vel=0.2,
         node._sv_client.wait_for_service(timeout_sec=5.0)
     sv = node._sv_client
 
-    def _valid(q_i):
+    def _mkreq(q_i):
         st = _copy.deepcopy(current)
         pos = list(st.joint_state.position)
         for k, nm in enumerate(st.joint_state.name):
@@ -975,17 +985,41 @@ def lerp_path(node, scene_client, exec_client, waypoints, vel=0.2,
         req = GetStateValidity.Request()
         req.robot_state = st
         req.group_name = "fairino10_v6_group"
-        fut = sv.call_async(req)
-        deadline = time.time() + 5.0
-        while not fut.done() and time.time() < deadline:
+        return req
+
+    def _valid_batch(samples):
+        """Validate many configs with a window of in-flight service calls.
+        Returns (ok, err_info). Serial round-trips cost ~100 ms each under
+        rviz load; 8 in flight cuts the pre-carry pause ~8x."""
+        WINDOW = 8
+        idx = 0
+        inflight = []   # (sample_index, future, sent_at, retried)
+        while idx < len(samples) or inflight:
+            while idx < len(samples) and len(inflight) < WINDOW:
+                inflight.append((idx, sv.call_async(_mkreq(samples[idx])),
+                                 time.time(), False))
+                idx += 1
             time.sleep(0.002)
-        res = fut.result() if fut.done() else None
-        if res is None:
-            return None
-        if not res.valid:
-            return {f"{c.contact_body_1}<->{c.contact_body_2}"
-                    for c in res.contacts}
-        return True
+            still = []
+            for (k, fut, t0, retried) in inflight:
+                if fut.done():
+                    res = fut.result()
+                    if res is None or not res.valid:
+                        pairs = {f"{c.contact_body_1}<->{c.contact_body_2}"
+                                 for c in (res.contacts if res else [])}
+                        return False, (f"blocked at sample {k+1}/{len(samples)}: "
+                                       + (", ".join(sorted(pairs)[:3])
+                                          or "in collision"))
+                elif time.time() - t0 > 10.0:
+                    if retried:
+                        return False, (f"validity check timed out "
+                                       f"(sample {k+1}/{len(samples)})")
+                    still.append((k, sv.call_async(_mkreq(samples[k])),
+                                  time.time(), True))
+                else:
+                    still.append((k, fut, t0, retried))
+            inflight = still
+        return True, ""
 
     from trajectory_msgs.msg import JointTrajectoryPoint
     from moveit_msgs.msg import RobotTrajectory
@@ -994,6 +1028,7 @@ def lerp_path(node, scene_client, exec_client, waypoints, vel=0.2,
     v_joint = max(0.05, vel * 1.5)   # rad/s nominal, scaled by vel
     t = 0.0
     total_d = 0.0
+    check_samples = []
     # the trajectory ALWAYS starts at the exact current state at t=0 —
     # controllers abort otherwise when the first real point is offset.
     pt0 = JointTrajectoryPoint()
@@ -1010,14 +1045,11 @@ def lerp_path(node, scene_client, exec_client, waypoints, vel=0.2,
             if i == 0:
                 continue   # vertex already added (or it's the t=0 point)
             q_i = [s + a * (g - s) for s, g in zip(start, goal)]
-            v = _valid(q_i)
-            if v is None:
-                return False, (f"lerp validity check timed out "
-                               f"(segment {s_i+1}/{len(pts)-1})")
-            if v is not True:
-                return False, (f"lerp blocked at segment {s_i+1}"
-                               f"/{len(pts)-1} {100.0*i/(n-1):.0f}%: "
-                               + (", ".join(sorted(v)[:3]) or "in collision"))
+            # sparse mode (taught path + unchanged layout fingerprint): the
+            # dense check was done at teach time; spot-check ~1 in 16.
+            keep = (i % 16 == 0) if sparse_check else (i % 2 == 0)
+            if keep or i == n - 1:
+                check_samples.append(q_i)
             pt = JointTrajectoryPoint()
             pt.positions = q_i
             # strictly increasing time with a floor per step: near-zero-length
@@ -1032,9 +1064,19 @@ def lerp_path(node, scene_client, exec_client, waypoints, vel=0.2,
     if len(traj.joint_trajectory.points) < 2:
         return True, "already there (Δ<1e-4)"
 
-    ok, tilt_info = _check_tilt_gate(node, tilt_gate, traj)
+    ok, err = _valid_batch(check_samples)
     if not ok:
-        return False, tilt_info
+        return False, f"lerp {err}"
+
+    if trusted_tilt is not None:
+        # tilt of a FIXED joint path never changes (FK is a pure function of
+        # joint values) — the teach-time measurement stands; skip re-FKing
+        # every waypoint (this was ~60 s of the pre-carry pause).
+        tilt_info = f", tilt≤{trusted_tilt:.1f}° (taught, FK-verified at teach time)"
+    else:
+        ok, tilt_info = _check_tilt_gate(node, tilt_gate, traj)
+        if not ok:
+            return False, tilt_info
 
     goal_msg = ExecuteTrajectory.Goal()
     goal_msg.trajectory = traj
@@ -1090,7 +1132,62 @@ def _taught_carry_path(source, target):
     else:
         return None
     names = data["joint_names"]
-    return [dict(zip(names, w)) for w in wps]
+    return ([dict(zip(names, w)) for w in wps],
+            {"max_tilt_deg": data.get("max_tilt_deg"),
+             "layout_fingerprint": data.get("layout_fingerprint")})
+
+
+def _layout_fingerprint(node, scene_client):
+    """Hash of everything that defines collision geometry: the URDF (layout
+    args are xacro-baked into robot_description) + world collision objects.
+    Lets a taught-path replay skip the dense per-sample re-validation when
+    the world is PROVABLY unchanged since teach time (the validity service
+    is serialized server-side: ~250 ms/sample, ~60 s per carry otherwise).
+    Returns a hex digest or None if anything cannot be fetched."""
+    import hashlib
+    h = hashlib.sha256()
+    try:
+        from rcl_interfaces.srv import GetParameters
+        if not hasattr(node, "_rsp_param_cli"):
+            node._rsp_param_cli = node.create_client(
+                GetParameters, "/robot_state_publisher/get_parameters")
+            node._rsp_param_cli.wait_for_service(timeout_sec=5.0)
+        req = GetParameters.Request()
+        req.names = ["robot_description"]
+        fut = node._rsp_param_cli.call_async(req)
+        deadline = time.time() + 5.0
+        while not fut.done() and time.time() < deadline:
+            time.sleep(0.01)
+        if not fut.done() or not fut.result().values:
+            return None
+        h.update(fut.result().values[0].string_value.encode())
+    except Exception:
+        return None
+    try:
+        req = GetPlanningScene.Request()
+        req.components.components = (
+            PlanningSceneComponents.WORLD_OBJECT_NAMES
+            | PlanningSceneComponents.WORLD_OBJECT_GEOMETRY)
+        if not hasattr(node, "_gps_fp_cli"):
+            node._gps_fp_cli = node.create_client(
+                GetPlanningScene, "/get_planning_scene")
+            node._gps_fp_cli.wait_for_service(timeout_sec=5.0)
+        fut = node._gps_fp_cli.call_async(req)
+        deadline = time.time() + 5.0
+        while not fut.done() and time.time() < deadline:
+            time.sleep(0.01)
+        if not fut.done():
+            return None
+        for co in sorted(fut.result().scene.world.collision_objects,
+                         key=lambda c: c.id):
+            h.update(co.id.encode())
+            pp = co.pose
+            h.update((f"{pp.position.x:.3f},{pp.position.y:.3f},"
+                      f"{pp.position.z:.3f}").encode())
+            h.update(str(len(co.meshes)).encode())
+    except Exception:
+        return None
+    return h.hexdigest()
 
 
 def plan_side_stage(node, mg, ik_cli, scene_client, x, y, z, q,
@@ -1104,6 +1201,59 @@ def plan_side_stage(node, mg, ik_cli, scene_client, x, y, z, q,
     (2) hop 1 — swing ONLY j1 to the stage branch's heading (posture held),
     (3) hop 2 — close the remaining wrist/elbow gap. Both hops are short,
     collision-checked joint goals."""
+    # ── TAUGHT CARRY REPLAY (before any IK — the taught endpoint IS the
+    # stage config for this fixed layout, so the 63-call IK seed search is
+    # skipped entirely). Every sample is collision-checked against the LIVE
+    # scene (parallel batched); the tilt is the teach-time FK measurement
+    # (a fixed joint path can never change tilt). Recorded one way, replayed
+    # REVERSED for the other direction.
+    if tilt_gate is not None and source and target:
+        found = _taught_carry_path(source, target)
+        if found is not None:
+            taught, meta = found
+            fkc, max_deg = tilt_gate
+            trusted = meta.get("max_tilt_deg")
+            if trusted is not None and trusted > max_deg:
+                node.get_logger().warning(
+                    f"   taught path tilt {trusted:.1f}° exceeds the gate "
+                    f"({max_deg:.1f}°) — ignoring the taught path")
+            else:
+                fp_now = _layout_fingerprint(node, scene_client)
+                fp_rec = meta.get("layout_fingerprint")
+                sparse = (fp_now is not None and fp_rec is not None
+                          and fp_now == fp_rec)
+                node.get_logger().info(
+                    f"   taught carry path found ({len(taught)} waypoints) — "
+                    "replaying ("
+                    + ("layout unchanged: sparse spot-check" if sparse
+                       else "layout changed/unknown: dense collision check")
+                    + (", teach-time tilt" if trusted is not None
+                       else ", tilt gated") + ")")
+                ok, info = lerp_path(node, scene_client, exec_client, taught,
+                                     vel=vel, tilt_gate=tilt_gate,
+                                     trusted_tilt=trusted,
+                                     sparse_check=sparse)
+                if ok:
+                    return True, f"taught replay: {info}"
+                node.get_logger().warning(
+                    f"   whole-path replay rejected ({info}) — retrying in "
+                    "chunks")
+                CH = 12
+                all_ok = True
+                for c0 in range(0, len(taught), CH):
+                    ok, info = lerp_path(node, scene_client, exec_client,
+                                         taught[c0:c0 + CH], vel=vel,
+                                         tilt_gate=tilt_gate,
+                                         trusted_tilt=trusted)
+                    if not ok:
+                        all_ok = False
+                        node.get_logger().warning(
+                            f"   chunk {c0//CH+1} rejected ({info}) — "
+                            "falling back to the gated hop ladder")
+                        break
+                if all_ok:
+                    return True, f"taught replay (chunked): {info}"
+
     current = get_current_robot_state(node, scene_client)
     if current is None:
         return False, "could not fetch current robot state"
@@ -1127,42 +1277,7 @@ def plan_side_stage(node, mg, ik_cli, scene_client, x, y, z, q,
         return False, "IK failed (no collision-free solution at stage pose)"
     cur = dict(zip(current.joint_state.name, current.joint_state.position))
 
-    # ── TAUGHT CARRY REPLAY ─────────────────────────────────────────────
-    # If a taught flat carry exists for this (source, target), replay it as
-    # a deterministic joint polyline: every sample collision-checked against
-    # the LIVE scene and the whole path FK-tilt-gated before execution. A
-    # taught path recorded in one direction serves the other REVERSED.
-    if tilt_gate is not None and source and target:
-        taught = _taught_carry_path(source, target)
-        if taught is not None:
-            node.get_logger().info(
-                f"   taught carry path found ({len(taught)} waypoints) — "
-                "replaying (live collision + tilt checked)")
-            ok, info = lerp_path(node, scene_client, exec_client,
-                                 taught + [target_joints],
-                                 vel=vel, tilt_gate=tilt_gate)
-            if ok:
-                return True, f"taught replay: {info}"
-            node.get_logger().warning(
-                f"   whole-path replay rejected ({info}) — retrying in "
-                "chunks")
-            # chunked replay: short executions sidestep controller aborts
-            # seen on long single-goal trajectories.
-            full = taught + [target_joints]
-            CH = 12
-            all_ok = True
-            for c0 in range(0, len(full), CH):
-                chunk = full[c0:c0 + CH]
-                ok, info = lerp_path(node, scene_client, exec_client, chunk,
-                                     vel=vel, tilt_gate=tilt_gate)
-                if not ok:
-                    all_ok = False
-                    node.get_logger().warning(
-                        f"   chunk {c0//CH+1} rejected ({info}) — falling "
-                        "back to the gated hop ladder")
-                    break
-            if all_ok:
-                return True, f"taught replay (chunked): {info}"
+
 
     # ── Recording: set PXRD_RECORD_CARRY=/path/out.json to capture the
     # executed carry (all hop trajectories, concatenated) for teaching. ──
@@ -1250,6 +1365,10 @@ def plan_side_stage(node, mg, ik_cli, scene_client, x, y, z, q,
             ok, info = lerp_hop(node, scene_client, exec_client, jgoal,
                                 vel=vel, tilt_gate=tilt_gate,
                                 traj_sink=traj_sink)
+            if not ok and "could not fetch current robot state" in info:
+                # the node's service executor is wedged — nothing downstream
+                # can work; fail fast instead of burning retries.
+                return False, f"stage hop {i+1} ({label}): {info} (fast abort)"
             if not ok:
                 node.get_logger().info(
                     f"   hop lerp blocked ({info}) — gated OMPL rolls")
@@ -1288,9 +1407,25 @@ def plan_side_stage(node, mg, ik_cli, scene_client, x, y, z, q,
                 slim.append(w)
         if slim[-1] != wps[-1]:
             slim.append(wps[-1])
+        # teach-time tilt: FK the slim waypoints once and store it — replays
+        # then skip the per-run FK pass (a fixed joint path cannot change
+        # tilt).
+        rec_tilt = None
+        if tilt_gate is not None:
+            from moveit_msgs.msg import RobotTrajectory as _RT
+            from trajectory_msgs.msg import JointTrajectoryPoint as _JP
+            _tr = _RT(); _tr.joint_trajectory.joint_names = names
+            for w in slim:
+                _p = _JP(); _p.positions = list(w)
+                _tr.joint_trajectory.points.append(_p)
+            rec_tilt = _trajectory_max_tilt(node, tilt_gate[0], _tr)
         with open(record_path, "w") as f:
             json.dump({"joint_names": names, "waypoints": slim,
-                       "source": source, "target": target}, f, indent=1)
+                       "source": source, "target": target,
+                       "max_tilt_deg": rec_tilt,
+                       "layout_fingerprint":
+                           _layout_fingerprint(node, scene_client)},
+                      f, indent=1)
         node.get_logger().info(
             f"   RECORDED carry: {len(slim)} waypoints -> {record_path}")
     return True, info
