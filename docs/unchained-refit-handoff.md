@@ -12,6 +12,7 @@ CLAUDE.md rules.
 | 20ml round trip stand_pos2 ↔ deck_vortex_pos1 | **PASS both legs** |
 | 20ml LOAD from ALL 8 holder pockets → vortex pos1 | **PASS 8/8** (at final table position, see below) |
 | 8ml ROUND TRIP all 8 pockets ↔ vortex pos1 (2026-10-20) | **PASS 16/16** — load + retrieve every pocket, neighbors live |
+| 20ml ROUND TRIP all 8 pockets ↔ vortex pos1 (2026-10-20) | **PASS 16/16** — same loop |
 | sd rack | **NOT yet run** with the new grip/holder — next task |
 | Retrieve legs from vortex for pos7/pos8 sources | not spot-checked yet |
 | deck_9_10 with final geometry | not re-run since refit fixes |
@@ -97,7 +98,9 @@ plate first / use the escape scripts pattern from docs).
 Box stand-in replaced by the real table assembly
 (`cad/unchained/table_asm.STL` → `meshes/table_visual/collision.stl`):
 550×400 frame on casters, long side along world Y, same world position
-(−0.4, −1.7). **Tabletop plane = 776.2mm** above floor (was 750 box);
+(−0.4, −1.7). **Tabletop plane = 756.0mm** above floor (as-built 2026-10-25:
+table_z=−20.2mm — casters sink below the floor plane, table part origin ON
+the floor; was 776.2 wheels-on-floor, 750 box before that);
 table_top frame moved, holder + markers follow. Perimeter bolt heads
 (+3.6mm, ~22mm in from edges) are in collision but clear the centered
 holder footprint. **20ml re-validated from ALL 8 pockets → vortex pos1
@@ -113,13 +116,19 @@ rviz with origin markers):
 - Robot flange center on pedestal top: (−113.0, 0, +392.0) from pedestal
   origin, arm yawed **−45°** about vertical.
 - Heights above floor: scan origin **916.7**, pedestal top / robot base
-  plane **945.0**, tabletop **776.2**, scan's lowest point **588.0**
+  plane **945.0**, tabletop **756.0**, scan's lowest point **588.0**
   (bottom pad at scan coords (410.7, −328.6, −80.3)).
 - **User confirmed the real machine's lowest point = 588mm** →
   `device_height = 0.629675` is correct as-built; height chain validated.
 - Sim pedestal column runs 945 floor-to-top (585 source + 360 extension):
   the bare 585mm Vention column needs a 360mm base/riser, or adjust
   `device_height` + re-run the matrix if the as-built differs.
+
+- Table part origin → pedestal part origin mate (scan coords, mm):
+  **(ΔX +1010.0, ΔY +945.0, ΔZ −276.7)**, straight-line 1410.6. Table part
+  origin sits exactly ON the floor plane; pedestal origin = its top plane.
+  NOTE: matrices were validated at tabletop 776.2/750 — 756.0 sits between
+  the two proven heights; re-run one 20ml round-trip loop to confirm.
 
 ## Open items (in priority order)
 
