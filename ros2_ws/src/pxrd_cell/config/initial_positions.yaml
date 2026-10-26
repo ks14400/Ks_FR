@@ -1,11 +1,12 @@
-# Initial joint positions for the FR10 at launch (PXRD cell).
-# Folded "ready" pose, gripper pointing down. j1=0 because the PXRD arm mount
-# yaw is currently 0 (no compensation needed). If robot_mount_yaw_deg changes,
-# set j1 = -mount_yaw (rad) like the unchained cell, and re-verify in rviz.
+# Initial joint positions for the FR10 at launch (PXRD cell, 585mm layout).
+# Neutral folded "ready" pose, collision-free at the 585mm/yaw45 layout.
+# (The real jogged-into-bay pose is saved separately in
+# cad/pxrd/fr10_585_jogged_joints.json; it was only a reachability reference,
+# NOT a required waypoint.)
 initial_positions:
   j1: 0.0
-  j2: -1.1
-  j3: 1.9
-  j4: -2.4
+  j2: -1.0
+  j3: 1.3
+  j4: -1.5
   j5: -1.571
-  j6: 0.1
+  j6: 0.0

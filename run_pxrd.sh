@@ -31,17 +31,20 @@ source /opt/ros/humble/setup.bash
 source ros2_ws/install/setup.bash
 export ROS_DOMAIN_ID=43
 
-# Canonical FLAT-CARRY layout (2026-10-21, validated with the v3 plate):
-# pedestal stepped BACK to 0.70 and shifted +0.15 east vs the 2026-09 layout
-# (was off_z 0.55, off_x 0). Why: the v3 plate's long tab closes every carry
-# clearance at the old spot — the swing arc grazes the SmartLab cabinet's
-# west corner by 1 mm (structural: the arm cannot fold below the stage
-# radius) and the bay-mouth wrist yaw shaves the face. At 0.70/+0.15 the
-# corner clears by ~10 cm and the bay-mouth yaw circle clears by 4-14 cm.
-# The carry itself replays a TAUGHT flat path (config/taught_carry_*.json),
-# collision+tilt-checked live each run; the tilt gate (--max-carry-tilt 10)
-# guarantees the plate top face never tips, measured 9.3 deg max.
-SIM_ARGS="tall_pedestal:=true pedestal_off_z:=0.70 pedestal_off_x:=0.15 pedestal_off_y:=-0.2 table_x:=-0.5 table_y:=-0.9 table_h:=0.5"
+# ===== 585mm PEDESTAL LAYOUT (2026-10-23) — matches the real hardware =====
+# The FR10 is now on the 585mm Vention pedestal (tall_pedestal:=false), bolted
+# 45 deg rotated on the plate (robot_mount_yaw_deg:=45). Pedestal at off_z 0.8,
+# off_x 0.2 (off_y auto = -0.6246). These were calibrated in sim against the
+# REAL arm's jogged-into-bay joint pose (cad/pxrd/fr10_585_jogged_joints.json,
+# mirrored into config/initial_positions.yaml) until the sim gripper matched
+# the real one in the bay. Table position is still TBD (parked far away here).
+# STILL TODO for this layout: re-derive HOME_JOINTS + STAGE_HINTS, position the
+# table, re-run the round trip, and re-teach the flat carry (all were tuned for
+# the old 945mm layout and do NOT transfer).
+SIM_ARGS="tall_pedestal:=false pedestal_off_z:=0.8 pedestal_off_x:=0.2 pedestal_off_y:=auto robot_mount_yaw_deg:=45 table_x:=2.0 table_y:=2.0 table_h:=0.5"
+# PREVIOUS 945mm flat-carry layout (2026-10-21, v3-validated; superseded by the
+# 585mm hardware swap — kept for reference / rollback):
+#   SIM_ARGS="tall_pedestal:=true pedestal_off_z:=0.70 pedestal_off_x:=0.15 pedestal_off_y:=-0.2 table_x:=-0.5 table_y:=-0.9 table_h:=0.5"
 # Canonical validated motion flags. place-lift 0.002 (2026-10-22): the plate
 # seats 3 mm lower than the v2-era 0.005 — firmer set-down on the sample
 # stage (same change the unchained cell needed on hardware). The deep-reach
