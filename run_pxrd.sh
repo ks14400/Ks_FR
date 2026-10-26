@@ -2,14 +2,17 @@
 # ============================================================
 # PXRD cell launcher — one command to a working sim.
 #
-#   ./run_pxrd.sh sim         # clean + launch sim with canonical layout
-#   ./run_pxrd.sh load        # table -> PXRD  (plate into the instrument)
-#   ./run_pxrd.sh retrieve    # PXRD -> table  (plate out of the instrument)
-#   ./run_pxrd.sh home        # arm to home
-#   ./run_pxrd.sh recover     # stranded-arm rescue (extract from bay + home)
-#   ./run_pxrd.sh preflight   # FR10 -> MANUAL mode + enabled (run ONCE, no bridge)
-#   ./run_pxrd.sh hw-scene    # scene + MoveIt for the REAL robot
-#   ./run_pxrd.sh bridge      # hardware bridge to the FR10 (own terminal)
+#   ./run_pxrd.sh sim             # clean + launch sim with canonical layout
+#   ./run_pxrd.sh load            # table -> PXRD  (orchestrator pick_place)
+#   ./run_pxrd.sh retrieve        # PXRD -> table  (orchestrator pick_place)
+#   ./run_pxrd.sh replay          # table -> PXRD via the TAUGHT joint path (fast)
+#   ./run_pxrd.sh replay-reverse  # PXRD -> table via the taught path (retrieve)
+#   ./run_pxrd.sh replay-home     # park at the TAUGHT 585mm start-HOME (do FIRST)
+#   ./run_pxrd.sh home            # arm to home (OLD 945mm HOME_JOINTS — not 585mm)
+#   ./run_pxrd.sh recover         # stranded-arm rescue (extract from bay + home)
+#   ./run_pxrd.sh preflight       # FR10 -> MANUAL mode + enabled (ONCE, no bridge)
+#   ./run_pxrd.sh hw-scene        # scene + MoveIt for the REAL robot
+#   ./run_pxrd.sh bridge          # hardware bridge to the FR10 (own terminal)
 #
 # Run `sim` in one terminal (keeps rviz open); load/retrieve/home/recover in
 # a second terminal. Domain isolation (43) is handled automatically.
@@ -21,9 +24,18 @@
 #   T1: ./run_pxrd.sh bridge                  # verify robot_ip first!
 #   T2: ./run_pxrd.sh hw-scene
 #   T3: ./run_pxrd.sh load --plate v3 --hardware
-# Before the first insertion: verify the paddle pinch with
-#   ros2 run pxrd_cell go_home --gripper-mm 30   (and measure the real gap)
-# and RE-TEACH the carry on real geometry (PXRD_RECORD_CARRY, see docs).
+#
+# OPEN-SPACE MOTION REHEARSAL of the taught paths on the REAL FR10 (no gripper,
+# nothing within reach). The bridge executes the same budget-chunked trajectories;
+# real speed = BRIDGE_ARGS movej_vel_pct. The --hardware flag prints a checklist,
+# asks for confirmation, and moves to the side-HOME first before the path:
+#   preflight (ONCE), then  T1: bridge   T2: hw-scene
+#   T3: ./run_pxrd.sh replay-home --hardware      # home to the start pose FIRST
+#       ./run_pxrd.sh replay --hardware           # table -> PXRD  (traced in air)
+#       ./run_pxrd.sh replay-reverse --hardware   # PXRD -> table
+# Before the first REAL insertion (with a gripper + the instrument present):
+# verify the paddle pinch (ros2 run pxrd_cell go_home --gripper-mm 30, measure the
+# real gap) and RE-TEACH the carry on real geometry (PXRD_RECORD_CARRY, see docs).
 # ============================================================
 set -e
 cd "$(dirname "$0")"
@@ -37,11 +49,11 @@ export ROS_DOMAIN_ID=43
 # off_x 0.2 (off_y auto = -0.6246). These were calibrated in sim against the
 # REAL arm's jogged-into-bay joint pose (cad/pxrd/fr10_585_jogged_joints.json,
 # mirrored into config/initial_positions.yaml) until the sim gripper matched
-# the real one in the bay. Table position is still TBD (parked far away here).
-# STILL TODO for this layout: re-derive HOME_JOINTS + STAGE_HINTS, position the
-# table, re-run the round trip, and re-teach the flat carry (all were tuned for
-# the old 945mm layout and do NOT transfer).
-SIM_ARGS="tall_pedestal:=false pedestal_off_z:=0.8 pedestal_off_x:=0.2 pedestal_off_y:=auto robot_mount_yaw_deg:=45 table_x:=2.0 table_y:=2.0 table_h:=0.5"
+# the real one in the bay. Table at (-0.5,-0.9,0.5): the position the full
+# table->home->bay path was taught against (scripts/full_path_probe.py ->
+# cad/pxrd/taught_path_585_full.json; replay via scripts/pxrd_replay_path.py).
+# (2.0,2.0 "out of the way" was only for the earlier home-only testing.)
+SIM_ARGS="tall_pedestal:=false pedestal_off_z:=0.8 pedestal_off_x:=0.2 pedestal_off_y:=auto robot_mount_yaw_deg:=45 table_x:=-0.5 table_y:=-0.9 table_h:=0.5"
 # PREVIOUS 945mm flat-carry layout (2026-10-21, v3-validated; superseded by the
 # 585mm hardware swap — kept for reference / rollback):
 #   SIM_ARGS="tall_pedestal:=true pedestal_off_z:=0.70 pedestal_off_x:=0.15 pedestal_off_y:=-0.2 table_x:=-0.5 table_y:=-0.9 table_h:=0.5"
@@ -85,6 +97,23 @@ case "$cmd" in
   retrieve)
     exec ros2 run pxrd_cell pick_place --source pxrd_sample --target table_top $RUN_FLAGS "$@"
     ;;
+  replay)
+    # TAUGHT-PATH load (table -> PXRD) via the recorded joint path — fast, no
+    # IK/OMPL search. Works in sim as-is; on the REAL FR10 add --hardware after
+    # `preflight`+`bridge`+`hw-scene` are up (open space, no gripper).
+    exec python3 "$(dirname "$0")/scripts/pxrd_replay_path.py" "$@"
+    ;;
+  replay-reverse)
+    # TAUGHT-PATH retrieve (PXRD -> table). Same flags; add --hardware for real.
+    exec python3 "$(dirname "$0")/scripts/pxrd_replay_path.py" --reverse "$@"
+    ;;
+  replay-home)
+    # Park the arm at the TAUGHT side-HOME (the 585mm starting position the
+    # replay paths expect) and stop. Run this BEFORE replay/replay-reverse.
+    # NB: this is NOT `home` (go_home uses the stale 945mm HOME_JOINTS). Add
+    # --hardware to home the real FR10 (confirmation + bridge speed).
+    exec python3 "$(dirname "$0")/scripts/pxrd_replay_path.py" --home-only "$@"
+    ;;
   home)
     exec ros2 run pxrd_cell go_home "$@"
     ;;
@@ -92,7 +121,7 @@ case "$cmd" in
     exec ros2 run pxrd_cell recover "$@"
     ;;
   *)
-    echo "usage: $0 {sim|load|retrieve|home|recover|preflight|hw-scene|bridge} [extra args]" >&2
+    echo "usage: $0 {sim|load|retrieve|replay|replay-reverse|replay-home|home|recover|preflight|hw-scene|bridge} [extra args]" >&2
     exit 2
     ;;
 esac

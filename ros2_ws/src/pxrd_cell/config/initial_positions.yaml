@@ -1,12 +1,14 @@
 # Initial joint positions for the FR10 at launch (PXRD cell, 585mm layout).
-# Neutral folded "ready" pose, collision-free at the 585mm/yaw45 layout.
-# (The real jogged-into-bay pose is saved separately in
-# cad/pxrd/fr10_585_jogged_joints.json; it was only a reachability reference,
-# NOT a required waypoint.)
+# The taught SIDE-HOME pose (above the table, facing the work area): the arm
+# starts already oriented toward the table + bay, so a load/retrieve begins with
+# a small move instead of swinging the base ~169 deg around from a neutral j1=0
+# (the old neutral pose faced away from the work area, which looked like a weird
+# home that then swung around to reach the table). This is waypoint "lift to HOME
+# (side)" from cad/pxrd/taught_path_585_full.json.
 initial_positions:
-  j1: 0.0
-  j2: -1.0
-  j3: 1.3
-  j4: -1.5
-  j5: -1.571
-  j6: 0.0
+  j1: 2.8610
+  j2: -2.0470
+  j3: -2.2348
+  j4: -1.9951
+  j5: 0.4737
+  j6: 1.5642
