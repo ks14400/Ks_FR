@@ -77,6 +77,9 @@ PLATE_TYPES = {
     #   20ml body 0..25.1mm (vials +40!)  -> grip 15mm, extensions likely needed;
     #   sd   body 0..29.0mm              -> grip 19mm.
     "sd":   {"height": 0.077,  "mesh": "wp_sd.stl",   "grip_center": 0.019},
+    # 96:   plain 96-well plate (box, NO vials): body is grippable full-height
+    #       0..46.2mm -> pads centered 23mm (above pocket fins + nest collar).
+    "96":   {"height": 0.0462, "mesh": "wp_96.stl",   "grip_center": 0.023},
     "8ml":  {"height": 0.066,  "mesh": "wp_8ml.stl",  "grip_center": 0.030},
     "20ml": {"height": 0.0649, "mesh": "wp_20ml.stl", "grip_center": 0.015},
 }
@@ -1394,6 +1397,16 @@ def main():
                         "keeps fingers along the plate's short side but gives IK "
                         "room. Tighten to 0.15 if grip is rotating too far; loosen "
                         "to 1.0 if a deck refuses to plan")
+    p.add_argument("--pick-only", action="store_true",
+                   help="Stop after the carry reaches the via-home pose: the "
+                        "plate stays in the gripper (and attached in the "
+                        "scene). Pair with a later --place-held run.")
+    p.add_argument("--place-held", action="store_true",
+                   help="Place a plate that is ALREADY in the gripper "
+                        "(recovery / second half of --pick-only). Skips all "
+                        "source-side phases; attaches the plate at the "
+                        "NOMINAL hold; --source is ignored (pass any deck). "
+                        "Place orientation falls back to DOWN_Q.")
     p.add_argument("--no-plate", action="store_true",
                    help="Diagnostic: skip spawning the plate entirely. Lets us "
                         "isolate whether the descent failure is caused by the "
@@ -1560,7 +1573,17 @@ def main():
         fail("go-to-home failed")
 
     plate_parent = None  # tracks the link the plate is currently attached to
-    if args.no_plate:
+    if args.place_held:
+        node.get_logger().warning(
+            "--place-held: plate assumed IN THE GRIPPER; attaching at the "
+            "NOMINAL hold, skipping all source-side phases")
+        ok = _run_phase(node, phases, "attach HELD plate to gripper (nominal)",
+                        "scene-diff",
+                        lambda: (attach_plate_to_gripper(node, scene_client, None),
+                                 "ok"))
+        if not ok: fail("scene-diff failed")
+        plate_parent = "gripper_grasp_link"
+    elif args.no_plate:
         node.get_logger().warning("--no-plate: skipping plate spawn (diagnostic)")
     else:
         ok = _run_phase(node, phases,
@@ -1605,7 +1628,7 @@ def main():
     _along_long = abs(float(_pad_axis @ _Rsrc[:, 2]))   # marker Z = long axis
     _along_short = abs(float(_pad_axis @ _Rsrc[:, 0]))  # marker X = short axis
     _span = PLATE_FOOT_X if _along_long >= _along_short else PLATE_FOOT_Z
-    if args.grip_mm is None and args.grip_value == -0.64:
+    if args.grip_mm is None and args.grip_value == -0.64 and not args.place_held:
         if args.hardware:
             # REAL target: squeeze past the span so the force stop lands ON
             # the plate (the real close halts at the part, never tighter).
@@ -1652,7 +1675,7 @@ def main():
     # ============================================================
     # PHASE: approach above source  (OMPL — free-space routing)
     # ============================================================
-    if not _run_phase(node, phases, f"approach above {args.source}", "OMPL+IK",
+    if not args.place_held and not _run_phase(node, phases, f"approach above {args.source}", "OMPL+IK",
                       lambda: plan_arm_to_pose_via_ik(
                           node, mg, ik_client, get_scene_client,
                           "base_link", "gripper_grasp_link",
@@ -1673,22 +1696,22 @@ def main():
     # PHASE: open gripper AT THE HOVER (visible over the rack;
     # jaws open only here — never swung wide through the cell)
     # ============================================================
-    if args.no_gripper:
+    if args.no_gripper or args.place_held:
         node.get_logger().warning(
-            "--no-gripper: SKIPPING 'open gripper' phase (hardware arm-only)")
+            "SKIPPING 'open gripper' phase (arm-only or place-held)")
     else:
         if not _run_phase(node, phases, "open gripper", "OMPL",
                           lambda: plan_gripper(node, mg, GRIPPER_OPEN),
                           target_joint=GRIPPER_OPEN):
             fail("open gripper failed")
 
-    if _is_instrument_deck(args.source):
+    if _is_instrument_deck(args.source) and not args.place_held:
         set_nest_window(node, get_scene_client, scene_client, True)
 
     # ============================================================
     # PHASE: descend to grasp  (Cartesian — straight vertical)
     # ============================================================
-    if not _run_phase(node, phases, f"descend to grasp at {args.source}", "Cartesian",
+    if not args.place_held and not _run_phase(node, phases, f"descend to grasp at {args.source}", "Cartesian",
                       lambda: cartesian_move(
                           node, cart_client, exec_client,
                           "base_link", "gripper_grasp_link",
@@ -1703,9 +1726,9 @@ def main():
     # ============================================================
     # PHASE: close gripper  (OMPL joint goal)
     # ============================================================
-    if args.no_gripper:
+    if args.no_gripper or args.place_held:
         node.get_logger().warning(
-            "--no-gripper: SKIPPING 'close gripper' phase (hardware arm-only)")
+            "SKIPPING 'close gripper' phase (arm-only or place-held)")
     else:
         if not _run_phase(node, phases, "close gripper", "OMPL",
                           lambda: plan_gripper(node, mg, args.grip_value),
@@ -1715,7 +1738,7 @@ def main():
     # ============================================================
     # PHASE: attach plate to gripper  (scene-diff)
     # ============================================================
-    if not args.no_plate:
+    if not args.no_plate and not args.place_held:
         if not _run_phase(node, phases, "attach plate to gripper", "scene-diff",
                           lambda: (attach_plate_to_gripper(
                               node, scene_client, plate_parent,
@@ -1728,7 +1751,7 @@ def main():
     # ============================================================
     # PHASE: lift  (Cartesian — straight vertical, plate attached)
     # ============================================================
-    if not _run_phase(node, phases, f"lift above {args.source}", "Cartesian",
+    if not args.place_held and not _run_phase(node, phases, f"lift above {args.source}", "Cartesian",
                       lambda: cartesian_move(
                           node, cart_client, exec_client,
                           "base_link", "gripper_grasp_link",
@@ -1739,7 +1762,7 @@ def main():
                       max_step="5 mm"):
         fail("lift failed")
 
-    if _is_instrument_deck(args.source):
+    if _is_instrument_deck(args.source) and not args.place_held:
         set_nest_window(node, get_scene_client, scene_client, False)
 
     # ============================================================
@@ -1776,6 +1799,15 @@ def main():
                       note="splits the big transit into two cleaner segments"):
         fail("via-home failed")
 
+    if args.pick_only:
+        node.get_logger().warning(
+            "--pick-only: stopping at via-home WITH THE PLATE IN THE GRIPPER "
+            "(scene keeps the attachment; continue with --place-held)")
+        _print_summary(node, phases)
+        node.get_logger().info("DONE (pick-only)")
+        rclpy.shutdown()
+        return
+
     # ============================================================
     # PHASE: transit above target  (OMPL — now from home, much shorter swing)
     # Plate is in the gripper during this phase. The via-home segment
@@ -1811,13 +1843,16 @@ def main():
     place_hang = (HELD_BOTTOM_BELOW_TCP if HELD_BOTTOM_BELOW_TCP is not None
                   else args.grasp_offset + args.pick_lift)
     place_float = rest_float_for(args.target)
-    if args.hardware and place_float < 0.003:
-        # Real encoders settle a hair off the planned pose; a flush 0.5mm
-        # float makes the model see the seated plate inside the holder floor
-        # (pre-release lift then starts in collision). Release 3mm up and
-        # let the pocket fins seat the plate — that is what they are for.
-        place_float = 0.003
-        node.get_logger().info("   hardware: place float raised to 3mm (drop-seat)")
+    if args.hardware and place_float == REST_FLOAT_OPEN:
+        # Hardware stand/table places: the rigid attach records the REAL
+        # lateral grasp offset (encoders settle ~1-2mm off-plan), and the
+        # pocket has only 0.05mm/side clearance — so the VIRTUAL plate can
+        # never thread the virtual pocket (final-step collision, measured
+        # 2026-10-27: 96-plate place blocked at 92.9%). Release ABOVE the
+        # 5mm corner fins and let them seat the plate — their design job.
+        place_float = 0.008
+        node.get_logger().info("   hardware: place float raised to 8mm "
+                               "(release above the pocket fins; fins seat the plate)")
     node.get_logger().info(
         f"place height: deck + {place_hang*1000:.1f}mm (measured hold) "
         f"+ {place_float*1000:.1f}mm float")

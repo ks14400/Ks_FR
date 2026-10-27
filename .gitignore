@@ -47,3 +47,5 @@ ros2_ws/**/COLCON_IGNORE
 # Nested upstream clone with its own .git (reference only; re-clone if needed:
 # FAIR-INNOVATION/frcobot_ros2). Excluded to avoid a git submodule tangle.
 frcobot_ros2_repo/
+unchained_ui/runs/
+unchained_ui/proc_logs/

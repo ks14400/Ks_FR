@@ -1,0 +1,233 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Unchained Cell</title>
+<style>
+  :root { --bg:#14161a; --card:#1e2127; --tx:#e8e8ea; --mut:#9aa0ab;
+          --ok:#3fb950; --bad:#f85149; --warn:#d29922; --acc:#4493f8; }
+  * { box-sizing:border-box; font-family:system-ui,sans-serif; }
+  body { margin:0; background:var(--bg); color:var(--tx); }
+  header { display:flex; align-items:center; gap:14px; padding:10px 16px;
+           background:var(--card); border-bottom:1px solid #333;
+           position:sticky; top:0; z-index:5; }
+  h1 { font-size:16px; margin:0; } h2 { font-size:13px; margin:0 0 8px;
+       color:var(--mut); text-transform:uppercase; letter-spacing:.08em; }
+  main { display:grid; grid-template-columns:repeat(auto-fit,minmax(330px,1fr));
+         gap:12px; padding:12px; max-width:1500px; margin:auto; }
+  .card { background:var(--card); border:1px solid #30343b; border-radius:8px;
+          padding:12px; }
+  button { background:#2b303a; color:var(--tx); border:1px solid #444;
+           border-radius:6px; padding:7px 12px; margin:3px 4px 3px 0;
+           cursor:pointer; font-size:13px; }
+  button:hover { border-color:var(--acc); }
+  button.primary { background:var(--acc); border-color:var(--acc); color:#fff; }
+  button.danger  { background:var(--bad); border-color:var(--bad); color:#fff;
+                   font-weight:700; font-size:15px; padding:10px 22px; }
+  select,input { background:#121418; color:var(--tx); border:1px solid #444;
+                 border-radius:5px; padding:6px 8px; font-size:13px; }
+  input[type=number] { width:82px; }
+  .dot { display:inline-block; width:10px; height:10px; border-radius:50%;
+         margin-right:5px; background:#555; }
+  .dot.ok { background:var(--ok); } .dot.bad { background:var(--bad); }
+  .dot.warn { background:var(--warn); }
+  .row { margin:6px 0; display:flex; flex-wrap:wrap; align-items:center; gap:6px; }
+  .lbl { color:var(--mut); font-size:12px; min-width:135px; }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  td,th { padding:4px 6px; border-bottom:1px solid #2b2f36; text-align:left; }
+  tr.clickable { cursor:pointer; } tr.clickable:hover { background:#262b33; }
+  .PASS { color:var(--ok); font-weight:700; } .FAIL { color:var(--bad); font-weight:700; }
+  .RUN  { color:var(--warn); font-weight:700; }
+  pre { background:#0d0f12; padding:8px; border-radius:6px; overflow:auto;
+        max-height:320px; font-size:11.5px; white-space:pre-wrap; }
+  #toast { position:fixed; bottom:14px; left:50%; transform:translateX(-50%);
+           background:#2b303a; border:1px solid var(--acc); padding:8px 16px;
+           border-radius:8px; display:none; z-index:10; font-size:13px; }
+  .wide { grid-column:1 / -1; }
+</style>
+
+<header>
+  <h1>Unchained Cell</h1>
+  <span id="st_bridge"><span class="dot"></span>bridge</span>
+  <span id="st_scene"><span class="dot"></span>scene</span>
+  <span id="st_dup" style="display:none" class="FAIL">DUPLICATE SCENE!</span>
+  <span id="st_robot"><span class="dot"></span>robot</span>
+  <span id="st_pxrd" style="color:var(--mut)"></span>
+  <span id="st_run" class="RUN"></span>
+  <span style="flex:1"></span>
+  <button class="danger" onclick="api('/api/stop',{})">STOP</button>
+</header>
+
+<main>
+  <div class="card">
+    <h2>System</h2>
+    <div class="row">
+      <button onclick="api('/api/launch/bridge',{})">Launch Bridge</button>
+      <button onclick="api('/api/launch/scene',{})">Launch HW Scene</button>
+      <button onclick="api('/api/launch/sim',{})">Launch Sim</button>
+    </div>
+    <div class="row">
+      <button onclick="api('/api/kill/scene',{})">Kill Scene (42 only)</button>
+      <button onclick="api('/api/kill/bridge',{})">Kill Bridge</button>
+    </div>
+    <div class="row">
+      <button onclick="api('/api/home',{hardware:hw()})">Home arm</button>
+      <button onclick="api('/api/purge',{})">Purge scene</button>
+      <button onclick="readGrip()">Read gripper</button>
+      <span id="grip_state" class="lbl"></span>
+    </div>
+    <div class="row">
+      <button onclick="api('/api/gripper',{act:'open'})">Jaws OPEN</button>
+      <button onclick="api('/api/gripper',{act:'close'})">Jaws CLOSE</button>
+      <input type="number" id="jaw_mm" value="100" step="0.5">
+      <button onclick="api('/api/gripper',{act:'mm',mm:+document.getElementById('jaw_mm').value})">Jaws to mm</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Action</h2>
+    <div class="row"><span class="lbl">Source</span><select id="src"></select></div>
+    <div class="row"><span class="lbl">Target</span><select id="tgt"></select></div>
+    <div class="row"><span class="lbl">Plate type</span><select id="plate"></select></div>
+    <div class="row">
+      <label><input type="checkbox" id="hardware"> hardware</label>
+      <label><input type="checkbox" id="dry"> dry run (arm only)</label>
+    </div>
+    <div class="row">
+      <button class="primary" onclick="run('pick_place')">Pick &amp; Place</button>
+      <button onclick="run('pick_only')">Pick only</button>
+      <button onclick="run('place_held')">Place held</button>
+    </div>
+    <div class="row"><span class="lbl">extra flags</span>
+      <input id="extra" style="flex:1" placeholder="--hover 0.2 ..."></div>
+  </div>
+
+  <div class="card">
+    <h2>Parameters <span style="float:right"><button onclick="saveCfg()">Save</button></span></h2>
+    <div id="params"></div>
+    <h2 style="margin-top:10px">Deck Z-trims (mm)</h2>
+    <div id="trims"></div>
+    <div class="row">
+      <button onclick="applyBridgeLive()">Apply speed/force LIVE to bridge</button>
+    </div>
+  </div>
+
+  <div class="card wide">
+    <h2>Runs <span style="float:right"><button onclick="loadRuns()">Refresh</button></span></h2>
+    <table id="runs"><tr><th>run</th><th>result</th><th>failed phase</th>
+      <th>hold</th><th>grip</th><th></th></tr></table>
+    <pre id="runlog" style="display:none"></pre>
+  </div>
+</main>
+<div id="toast"></div>
+
+<script>
+const $=id=>document.getElementById(id);
+const hw=()=>$('hardware').checked;
+let CFG={}, DECKS=[], PLATES=[];
+
+function toast(m){const t=$('toast');t.textContent=m;t.style.display='block';
+  clearTimeout(t._h);t._h=setTimeout(()=>t.style.display='none',3500);}
+
+async function api(path,body){
+  const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(body||{})});
+  const j=await r.json();
+  toast(j.error?('ERROR: '+j.error):(j.started?('started '+j.started):'ok'));
+  setTimeout(refresh,800); setTimeout(loadRuns,1200);
+  return j;
+}
+
+function run(action){
+  api('/api/run',{action,source:$('src').value,target:$('tgt').value,
+    plate_type:$('plate').value,hardware:hw(),no_gripper:$('dry').checked,
+    extra_flags:$('extra').value.trim()});
+}
+
+async function readGrip(){
+  $('grip_state').textContent='reading…';
+  const r=await fetch('/api/gripper_state'); const j=await r.json();
+  $('grip_state').textContent=j.ok?`jaws: ${j.label} (${j.joint.toFixed(3)})`:'no joint data';
+}
+
+const PARAM_DEFS=[
+  ['grip_mm_long','grip-mm LONG side (stand picks)'],
+  ['grip_mm_short','grip-mm SHORT side (0 = auto)'],
+  ['pre_release_lift_m','pre-release lift (m)'],
+  ['pick_lift_m','pick lift (m)'],
+  ['bridge_movej_vel_pct','bridge speed %'],
+  ['bridge_movej_acc_pct','bridge accel %'],
+  ['bridge_gripper_force_pct','gripper force %'],
+];
+
+function renderCfg(){
+  $('params').innerHTML=PARAM_DEFS.map(([k,l])=>
+    `<div class="row"><span class="lbl">${l}</span>
+     <input type="number" step="any" id="cfg_${k}" value="${CFG[k]??''}"></div>`).join('');
+  const tr=CFG.deck_z_trim_mm||{};
+  $('trims').innerHTML=DECKS.filter(d=>!d.startsWith('stand_pos')&&d!=='table_top')
+    .map(d=>`<div class="row"><span class="lbl">${d}</span>
+     <input type="number" step="0.5" id="trim_${d}" value="${tr[d]??0}"></div>`).join('')
+    +'<div class="lbl" style="margin-top:4px">stand pockets: no trim (baked into table_z)</div>';
+}
+
+function collectCfg(){
+  PARAM_DEFS.forEach(([k])=>{const v=$('cfg_'+k).value; CFG[k]=v===''?null:+v;});
+  const tr={};
+  DECKS.filter(d=>!d.startsWith('stand_pos')&&d!=='table_top').forEach(d=>{
+    const v=+($('trim_'+d).value||0); if(v) tr[d]=v;});
+  CFG.deck_z_trim_mm=tr;
+}
+
+async function saveCfg(){collectCfg();await api('/api/config',{config:CFG});}
+
+async function applyBridgeLive(){
+  collectCfg();
+  await api('/api/bridge_param',{params:{
+    movej_vel_pct:CFG.bridge_movej_vel_pct,
+    movej_acc_pct:CFG.bridge_movej_acc_pct,
+    gripper_force_pct:CFG.bridge_gripper_force_pct}});
+  await api('/api/config',{config:CFG});
+}
+
+async function refresh(){
+  const r=await fetch('/api/status'); const s=await r.json();
+  const set=(id,ok)=>{$(id).querySelector('.dot').className='dot '+(ok?'ok':'bad');};
+  set('st_bridge',s.bridge); set('st_scene',s.scene); set('st_robot',s.robot_ping);
+  $('st_dup').style.display=s.duplicate_scene?'inline':'none';
+  $('st_pxrd').textContent=s.pxrd_running?'pxrd@43 live':'';
+  $('st_run').textContent=s.active_run?('RUNNING: '+s.active_run):'';
+}
+
+async function loadRuns(){
+  const r=await fetch('/api/runs'); const list=await r.json();
+  const rows=list.map(x=>{
+    const s=x.summary, p=x.params||{};
+    const res=x.running?'RUN':(s?(s.pass?'PASS':'FAIL'):'…');
+    const fp=s&&s.failed_phase?`${s.failed_phase.phase} (${s.failed_phase.info.slice(0,46)})`:'';
+    const hold=s&&s.notes&&s.notes.rigid_hold?s.notes.rigid_hold.split(' below')[0]:'';
+    const grip=s&&s.notes&&(s.notes.grip_auto||s.notes.grip_cmd)||'';
+    return `<tr class="clickable" onclick="showLog('${x.id}')">
+      <td>${x.id}</td><td class="${res}">${res}</td><td>${fp}</td>
+      <td>${hold}</td><td>${String(grip).slice(0,42)}</td>
+      <td><button onclick="event.stopPropagation();showLog('${x.id}')">log</button></td></tr>`;
+  }).join('');
+  $('runs').innerHTML='<tr><th>run</th><th>result</th><th>failed phase</th><th>hold</th><th>grip</th><th></th></tr>'+rows;
+}
+
+async function showLog(id){
+  const r=await fetch('/api/run_log/'+id); const j=await r.json();
+  const el=$('runlog'); el.style.display='block'; el.textContent=j.log;
+  el.scrollTop=el.scrollHeight;
+}
+
+async function init(){
+  const r=await fetch('/api/config'); const j=await r.json();
+  CFG=j.config; DECKS=j.decks; PLATES=j.plate_types;
+  $('src').innerHTML=DECKS.map(d=>`<option>${d}</option>`).join('');
+  $('tgt').innerHTML=DECKS.map(d=>`<option>${d}</option>`).join('');
+  $('tgt').value='deck_vortex_pos1';
+  $('plate').innerHTML=PLATES.map(p=>`<option>${p}</option>`).join('');
+  renderCfg(); refresh(); loadRuns();
+  setInterval(refresh,4000);
+}
+init();
+</script>

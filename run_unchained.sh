@@ -39,13 +39,27 @@ BRIDGE_ARGS="robot_ip:=192.168.58.2 movej_vel_pct:=5 movej_acc_pct:=10 gripper_f
 #   BRIDGE_ARGS="robot_ip:=192.168.58.2 movej_vel_pct:=20 movej_acc_pct:=30 gripper_force_pct:=40"
 #   PICK_FLAGS="--yaw-tol 0.15 --vel 0.10 --hover 0.25 --pick-lift 0.015"
 
+# Kill ONLY this cell's (domain 42) scene nodes — never the pxrd cell on
+# domain 43, never the hardware bridge (sdk_executor). Runs before every
+# scene launch because duplicate hw-scene launches (twin move_groups
+# fighting over services) silently corrupted three hardware sessions.
+kill_scene_42() {
+  for pid in $(pgrep -f "unchained_full.launch|move_group --ros|rviz2|robot_state_pub|mimic_repeater|ros2_control_node|static_transform|joint_state|spawner"); do
+    dom=$(tr '\0' '\n' < /proc/$pid/environ 2>/dev/null | grep ROS_DOMAIN_ID | cut -d= -f2)
+    [ "$dom" = "42" ] && kill -9 "$pid" 2>/dev/null
+  done
+  sleep 2
+  return 0
+}
+
 cmd="${1:-sim}"; shift || true
 case "$cmd" in
   sim)
-    ./ros2_ws/clean_sim.sh || true
+    kill_scene_42
     exec ros2 launch unchained_cell unchained_full.launch.py "$@"
     ;;
   hw-scene)
+    kill_scene_42
     exec ros2 launch unchained_cell unchained_full.launch.py $HW_SCENE_ARGS "$@"
     ;;
   bridge)
@@ -61,8 +75,11 @@ case "$cmd" in
   stop)
     exec ros2 run unchained_cell stop "$@"
     ;;
+  ui)
+    exec python3 unchained_ui/server.py
+    ;;
   *)
-    echo "usage: $0 {sim|hw-scene|bridge|pick|home|stop} [extra args]" >&2
+    echo "usage: $0 {sim|hw-scene|bridge|pick|home|stop|ui} [extra args]" >&2
     exit 2
     ;;
 esac

@@ -310,7 +310,7 @@ def generate_launch_description():
                               description="Table X position in world (m)"),
         DeclareLaunchArgument("table_y", default_value="-1.7",
                               description="Table Y position in world (m)"),
-        DeclareLaunchArgument("table_z", default_value="-0.0202",
+        DeclareLaunchArgument("table_z", default_value="-0.0302",
                               description="Table Z position in world (m); top of table is at this + table_h"),
         DeclareLaunchArgument("table_w", default_value="0.4",
                               description="Table width (X dimension, m)"),

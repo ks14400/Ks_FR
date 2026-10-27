@@ -1,0 +1,401 @@
+#!/usr/bin/env python3
+"""
+Unchained cell test UI — thin web wrapper over the PROVEN CLI workflow.
+
+Serves one page (static/index.html) plus a JSON API. Every action shells out
+to the exact commands used by hand (run_unchained.sh / ros2 run ...), so the
+CLI stays the single source of truth. UNCHAINED ONLY (domain 42): all kills
+are domain-scoped and never touch the pxrd cell (43) or the bridge unless
+explicitly asked.
+
+Run:  python3 unchained_ui/server.py            (port 8420)
+      or  ./run_unchained.sh ui
+Deps: stdlib + PyYAML only.
+"""
+import json
+import os
+import re
+import signal
+import subprocess
+import threading
+import time
+from datetime import datetime
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+import yaml
+
+ROOT = os.path.dirname(os.path.abspath(__file__))          # unchained_ui/
+REPO = os.path.dirname(ROOT)                               # Ks_FR/
+RUNS = os.path.join(ROOT, "runs")
+PROC_LOGS = os.path.join(ROOT, "proc_logs")
+CONFIG = os.path.join(ROOT, "ui_config.yaml")
+DOMAIN = "42"
+PORT = 8420
+
+os.makedirs(RUNS, exist_ok=True)
+os.makedirs(PROC_LOGS, exist_ok=True)
+
+ENV_PREFIX = ("source /opt/ros/humble/setup.bash >/dev/null 2>&1; "
+              f"source {REPO}/ros2_ws/install/setup.bash >/dev/null 2>&1; "
+              f"export ROS_DOMAIN_ID={DOMAIN}; ")
+
+DECKS = ["stand_pos1", "stand_pos2", "stand_pos3", "stand_pos4",
+         "stand_pos5", "stand_pos6", "stand_pos7", "stand_pos8",
+         "deck_vortex_pos1", "deck_vortex_pos2", "deck_vortex_pos3",
+         "deck_9_10_pos1", "deck_9_10_pos2", "deck_9_10_pos3",
+         "deck_vacuum_filtration", "table_top"]
+PLATE_TYPES = ["8ml", "20ml", "sd", "96"]
+
+DEFAULT_CONFIG = {
+    # per-deck Z trims (mm) — the calibration ledger. Stand pockets: NEVER
+    # trim (table correction is baked into table_z).
+    "deck_z_trim_mm": {"deck_vortex_pos1": 2.0},
+    "grip_mm_long": 122.0,     # long-side clamp (stand picks), REAL mm on hw
+    "grip_mm_short": 0.0,      # 0 = AUTO (83.5 real)
+    "pre_release_lift_m": 0.005,
+    "pick_lift_m": 0.004,
+    "bridge_movej_vel_pct": 10,
+    "bridge_movej_acc_pct": 15,
+    "bridge_gripper_force_pct": 40,
+}
+
+
+def load_config():
+    cfg = dict(DEFAULT_CONFIG)
+    if os.path.exists(CONFIG):
+        with open(CONFIG) as f:
+            cfg.update(yaml.safe_load(f) or {})
+    return cfg
+
+
+def save_config(cfg):
+    with open(CONFIG, "w") as f:
+        yaml.safe_dump(cfg, f, sort_keys=False)
+
+
+def sh(cmd, timeout=20):
+    """Run a short command in the sourced env; return (rc, output)."""
+    try:
+        r = subprocess.run(["bash", "-c", ENV_PREFIX + cmd],
+                           capture_output=True, text=True, timeout=timeout)
+        return r.returncode, (r.stdout + r.stderr)
+    except subprocess.TimeoutExpired:
+        return -1, "TIMEOUT"
+
+
+def proc_domain(pid):
+    try:
+        with open(f"/proc/{pid}/environ", "rb") as f:
+            env = f.read().decode(errors="ignore")
+        m = re.search(r"ROS_DOMAIN_ID=(\d+)", env)
+        return m.group(1) if m else None
+    except OSError:
+        return None
+
+
+def pids_matching(pattern, domain=None):
+    r = subprocess.run(["pgrep", "-f", pattern], capture_output=True, text=True)
+    out = []
+    for pid in r.stdout.split():
+        if domain is None or proc_domain(pid) == domain:
+            out.append(pid)
+    return out
+
+
+SCENE_PATTERN = ("unchained_full.launch|move_group --ros|rviz2|"
+                 "robot_state_pub|mimic_repeater|ros2_control_node|"
+                 "static_transform|joint_state|spawner")
+
+
+def kill_scene_42():
+    for pid in pids_matching(SCENE_PATTERN, DOMAIN):
+        try:
+            os.kill(int(pid), signal.SIGKILL)
+        except OSError:
+            pass
+    time.sleep(2)
+
+
+def spawn_detached(cmd, logname):
+    """Launch a long-lived process (bridge/scene/sim) detached, log to file."""
+    log = open(os.path.join(PROC_LOGS, logname), "a")
+    log.write(f"\n===== {datetime.now().isoformat()} :: {cmd}\n")
+    log.flush()
+    subprocess.Popen(["bash", "-c", ENV_PREFIX + "exec " + cmd],
+                     stdout=log, stderr=log, stdin=subprocess.DEVNULL,
+                     start_new_session=True)
+
+
+# ───────────────────────── status ─────────────────────────
+
+def status():
+    rsp = pids_matching("robot_state_pub", DOMAIN)
+    mg = pids_matching("move_group --ros", DOMAIN)
+    bridge = pids_matching("sdk_executor", DOMAIN)
+    pxrd = pids_matching("move_group --ros|robot_state_pub", "43")
+    ping = subprocess.run(["ping", "-c", "1", "-W", "1", "192.168.58.2"],
+                          capture_output=True).returncode == 0
+    return {
+        "bridge": bool(bridge),
+        "scene": bool(mg),
+        "rsp_count": len(rsp),
+        "duplicate_scene": len(rsp) > 1 or len(mg) > 1,
+        "robot_ping": ping,
+        "pxrd_running": bool(pxrd),
+        "active_run": ACTIVE_RUN["id"] if ACTIVE_RUN["proc"] else None,
+    }
+
+
+def gripper_state():
+    rc, out = sh(
+        "python3 - <<'EOF'\n"
+        "import rclpy, time\n"
+        "from rclpy.node import Node\n"
+        "from sensor_msgs.msg import JointState\n"
+        "rclpy.init(); n=Node('ui_grip'); v={}\n"
+        "n.create_subscription(JointState,'/joint_states',"
+        "lambda m:[v.__setitem__(a,b) for a,b in zip(m.name,m.position)],20)\n"
+        "t=time.time()\n"
+        "while time.time()-t<2.5: rclpy.spin_once(n,timeout_sec=0.1)\n"
+        "print('F1=%.3f' % v.get('gripper_finger1_joint', 99))\n"
+        "rclpy.shutdown()\nEOF", timeout=15)
+    m = re.search(r"F1=(-?\d+\.\d+)", out)
+    if not m or float(m.group(1)) > 10:
+        return {"ok": False}
+    j = float(m.group(1))
+    return {"ok": True, "joint": j,
+            "label": "open" if j > -0.05 else ("closed" if j < -0.55 else f"{j:+.2f}")}
+
+
+# ───────────────────────── run executor ─────────────────────────
+
+ACTIVE_RUN = {"proc": None, "id": None}
+RUN_LOCK = threading.Lock()
+
+PHASE_RE = re.compile(r"\[(OK|FAIL)\s*\]\s+(.+?)\s{2,}(\S+)\s+([\d.]+)s\s+(.*)")
+
+
+def parse_summary(output):
+    phases, notes = [], {}
+    for line in output.splitlines():
+        m = PHASE_RE.search(line)
+        if m:
+            phases.append({"result": m.group(1), "phase": m.group(2).strip(),
+                           "method": m.group(3), "secs": float(m.group(4)),
+                           "info": m.group(5).strip()})
+        for key, pat in (("rigid_hold", r"rigid hold: (.+)"),
+                         ("grip_auto", r"grip width AUTO: (.+)"),
+                         ("place_height", r"place height: (.+)"),
+                         ("grip_cmd", r"\[gripper\] (.+)"),
+                         ("hover", r"\[hover\] (.+)")):
+            m2 = re.search(pat, line)
+            if m2:
+                notes[key] = m2.group(1).strip()
+    failed = [p for p in phases if p["result"] == "FAIL"]
+    done = bool(re.search(r"\bDONE\b", output))
+    return {"phases": phases, "notes": notes, "pass": done and not failed,
+            "failed_phase": failed[0] if failed else None}
+
+
+def start_run(body, cfg):
+    action = body.get("action", "pick_place")   # pick_place | pick_only | place_held
+    src, tgt = body["source"], body["target"]
+    plate = body["plate_type"]
+    hardware = bool(body.get("hardware", False))
+    dry = bool(body.get("no_gripper", False))
+
+    cmd = (f"ros2 run unchained_cell pick_place --source {src} --target {tgt} "
+           f"--plate-type {plate}")
+    if hardware:
+        cmd += " --hardware"
+    if dry:
+        cmd += " --no-gripper"
+    if action == "pick_only":
+        cmd += " --pick-only"
+    if action == "place_held":
+        cmd += " --place-held"
+
+    trims = cfg.get("deck_z_trim_mm", {}) or {}
+    flags = {}
+    if action != "place_held" and trims.get(src):
+        cmd += f" --source-z-trim {trims[src]}"; flags["source_z_trim"] = trims[src]
+    if trims.get(tgt):
+        cmd += f" --target-z-trim {trims[tgt]}"; flags["target_z_trim"] = trims[tgt]
+    # grip override: long side picks come from stand pockets, short from others
+    grip = None
+    if action != "place_held" and not dry:
+        grip = (cfg.get("grip_mm_long") if src.startswith("stand_pos")
+                else cfg.get("grip_mm_short"))
+        if grip:
+            cmd += f" --grip-mm {grip}"; flags["grip_mm"] = grip
+    if cfg.get("pre_release_lift_m") not in (None, "", 0.015):
+        cmd += f" --pre-release-lift {cfg['pre_release_lift_m']}"
+        flags["pre_release_lift"] = cfg["pre_release_lift_m"]
+    if cfg.get("pick_lift_m") not in (None, "", 0.004):
+        cmd += f" --pick-lift {cfg['pick_lift_m']}"
+        flags["pick_lift"] = cfg["pick_lift_m"]
+    if body.get("extra_flags"):
+        cmd += " " + body["extra_flags"]
+
+    run_id = (datetime.now().strftime("%Y-%m-%d_%H%M%S") +
+              f"_{action}_{src}_to_{tgt}_{plate}" +
+              ("_hw" if hardware else "_sim"))
+    rdir = os.path.join(RUNS, run_id)
+    os.makedirs(rdir, exist_ok=True)
+    with open(os.path.join(rdir, "params.json"), "w") as f:
+        json.dump({"id": run_id, "cmd": cmd, "action": action, "source": src,
+                   "target": tgt, "plate_type": plate, "hardware": hardware,
+                   "no_gripper": dry, "flags": flags, "config": cfg,
+                   "started": datetime.now().isoformat()}, f, indent=2)
+
+    def worker():
+        out_path = os.path.join(rdir, "output.log")
+        with open(out_path, "w") as out:
+            p = subprocess.Popen(["bash", "-c", ENV_PREFIX + cmd],
+                                 stdout=out, stderr=subprocess.STDOUT,
+                                 stdin=subprocess.DEVNULL,
+                                 start_new_session=True)
+            ACTIVE_RUN["proc"], ACTIVE_RUN["id"] = p, run_id
+            p.wait()
+        with open(out_path) as f:
+            summary = parse_summary(f.read())
+        summary["rc"] = p.returncode
+        summary["finished"] = datetime.now().isoformat()
+        with open(os.path.join(rdir, "summary.json"), "w") as f:
+            json.dump(summary, f, indent=2)
+        ACTIVE_RUN["proc"], ACTIVE_RUN["id"] = None, None
+
+    with RUN_LOCK:
+        if ACTIVE_RUN["proc"]:
+            return {"error": "a run is already active", "id": ACTIVE_RUN["id"]}
+        threading.Thread(target=worker, daemon=True).start()
+    return {"started": run_id, "cmd": cmd}
+
+
+def list_runs(limit=40):
+    out = []
+    for name in sorted(os.listdir(RUNS), reverse=True)[:limit]:
+        d = os.path.join(RUNS, name)
+        item = {"id": name, "running": name == ACTIVE_RUN["id"]}
+        for fn in ("params.json", "summary.json"):
+            fp = os.path.join(d, fn)
+            if os.path.exists(fp):
+                with open(fp) as f:
+                    item[fn.split(".")[0]] = json.load(f)
+        out.append(item)
+    return out
+
+
+# ───────────────────────── HTTP ─────────────────────────
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+
+    def _json(self, obj, code=200):
+        data = json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self):
+        if self.path in ("/", "/index.html"):
+            with open(os.path.join(ROOT, "static", "index.html"), "rb") as f:
+                data = f.read()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        elif self.path == "/api/status":
+            self._json(status())
+        elif self.path == "/api/gripper_state":
+            self._json(gripper_state())
+        elif self.path == "/api/config":
+            self._json({"config": load_config(), "decks": DECKS,
+                        "plate_types": PLATE_TYPES})
+        elif self.path == "/api/runs":
+            self._json(list_runs())
+        elif self.path.startswith("/api/run_log/"):
+            rid = os.path.basename(self.path[len("/api/run_log/"):])
+            fp = os.path.join(RUNS, rid, "output.log")
+            txt = open(fp).read()[-40000:] if os.path.exists(fp) else "(no log)"
+            self._json({"log": txt})
+        else:
+            self._json({"error": "not found"}, 404)
+
+    def do_POST(self):
+        n = int(self.headers.get("Content-Length") or 0)
+        body = json.loads(self.rfile.read(n) or b"{}")
+        p = self.path
+        cfg = load_config()
+        if p == "/api/launch/bridge":
+            spawn_detached(
+                f"{REPO}/run_unchained.sh bridge "
+                f"movej_vel_pct:={cfg['bridge_movej_vel_pct']} "
+                f"movej_acc_pct:={cfg['bridge_movej_acc_pct']} "
+                f"gripper_force_pct:={cfg['bridge_gripper_force_pct']}",
+                "bridge.log")
+            self._json({"ok": True})
+        elif p == "/api/launch/scene":
+            kill_scene_42()
+            spawn_detached(f"{REPO}/run_unchained.sh hw-scene", "scene.log")
+            self._json({"ok": True})
+        elif p == "/api/launch/sim":
+            kill_scene_42()
+            spawn_detached(f"{REPO}/run_unchained.sh sim", "sim.log")
+            self._json({"ok": True})
+        elif p == "/api/kill/scene":
+            kill_scene_42()
+            self._json({"ok": True})
+        elif p == "/api/kill/bridge":
+            for pid in pids_matching("sdk_executor", DOMAIN):
+                os.kill(int(pid), signal.SIGKILL)
+            self._json({"ok": True})
+        elif p == "/api/stop":
+            rc, out = sh("ros2 run unchained_cell stop", timeout=20)
+            if ACTIVE_RUN["proc"]:
+                try:
+                    os.killpg(ACTIVE_RUN["proc"].pid, signal.SIGINT)
+                except OSError:
+                    pass
+            self._json({"ok": True, "out": out[-500:]})
+        elif p == "/api/run":
+            self._json(start_run(body, cfg))
+        elif p == "/api/gripper":
+            act = body.get("act")
+            if act == "mm":
+                cmd = (f"ros2 run unchained_cell go_home --hardware "
+                       f"--gripper-only --gripper-mm {body['mm']}")
+            else:
+                cmd = (f"ros2 run unchained_cell go_home --hardware "
+                       f"--gripper-only --gripper {act}")
+            rc, out = sh(cmd, timeout=60)
+            self._json({"ok": rc == 0, "out": out[-800:]})
+        elif p == "/api/home":
+            hw = " --hardware" if body.get("hardware") else ""
+            rc, out = sh(f"ros2 run unchained_cell go_home{hw}", timeout=180)
+            self._json({"ok": rc == 0, "out": out[-800:]})
+        elif p == "/api/purge":
+            rc, out = sh("ros2 run unchained_cell purge_scene", timeout=30)
+            self._json({"ok": rc == 0, "out": out[-500:]})
+        elif p == "/api/config":
+            cfg.update(body.get("config", {}))
+            save_config(cfg)
+            self._json({"ok": True, "config": cfg})
+        elif p == "/api/bridge_param":
+            # live-tune bridge params (speed/force) without relaunch
+            outs = []
+            for k, v in body.get("params", {}).items():
+                rc, out = sh(f"ros2 param set /sdk_executor {k} {v}", timeout=15)
+                outs.append(f"{k}={v}: {out.strip()[-80:]}")
+            self._json({"ok": True, "out": outs})
+        else:
+            self._json({"error": "not found"}, 404)
+
+
+if __name__ == "__main__":
+    print(f"Unchained UI on http://0.0.0.0:{PORT}  (runs -> {RUNS})")
+    ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
