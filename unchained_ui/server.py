@@ -116,6 +116,24 @@ def kill_scene_42():
     time.sleep(2)
 
 
+def desktop_env():
+    """Borrow DISPLAY/XAUTHORITY from the active desktop session so rviz
+    windows open on the NUC's screen even though the server runs headless."""
+    env = dict(os.environ)
+    try:
+        pid = subprocess.run(["pgrep", "-u", str(os.getuid()), "Xwayland"],
+                             capture_output=True, text=True).stdout.split()[0]
+        with open(f"/proc/{pid}/environ", "rb") as f:
+            for item in f.read().decode(errors="ignore").split("\0"):
+                if item.split("=")[0] in ("DISPLAY", "XAUTHORITY",
+                                          "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR"):
+                    k, _, v = item.partition("=")
+                    env[k] = v
+    except (IndexError, OSError):
+        env.setdefault("DISPLAY", ":0")
+    return env
+
+
 def spawn_detached(cmd, logname):
     """Launch a long-lived process (bridge/scene/sim) detached, log to file."""
     log = open(os.path.join(PROC_LOGS, logname), "a")
@@ -123,7 +141,7 @@ def spawn_detached(cmd, logname):
     log.flush()
     subprocess.Popen(["bash", "-c", ENV_PREFIX + "exec " + cmd],
                      stdout=log, stderr=log, stdin=subprocess.DEVNULL,
-                     start_new_session=True)
+                     start_new_session=True, env=desktop_env())
 
 
 # ───────────────────────── status ─────────────────────────
