@@ -185,6 +185,56 @@ def gripper_state():
             "label": "open" if j > -0.05 else ("closed" if j < -0.55 else f"{j:+.2f}")}
 
 
+CALIB = os.path.join(ROOT, "deck_calib.yaml")
+
+
+def load_calib():
+    if os.path.exists(CALIB):
+        with open(CALIB) as f:
+            return yaml.safe_load(f) or {}
+    return {}
+
+
+def save_calib(c):
+    with open(CALIB, "w") as f:
+        yaml.safe_dump(c, f, sort_keys=False)
+
+
+def teach_pose(deck, plate_type):
+    """Current TCP vs deck marker (base_link) + delta vs the AUTO grasp
+    height for the selected plate type. All mm."""
+    rc, out = sh(
+        "python3 - <<'EOF'\n"
+        "import sys, threading, time\n"
+        f"sys.path.insert(0, '{REPO}/ros2_ws/src/unchained_cell')\n"
+        "import rclpy\n"
+        "from rclpy.node import Node\n"
+        "from rclpy.executors import MultiThreadedExecutor\n"
+        "from tf2_ros import Buffer, TransformListener\n"
+        "from unchained_cell import pick_place as pp\n"
+        f"pp.set_plate_type('{plate_type}')\n"
+        "rclpy.init(); n=Node('ui_teach')\n"
+        "ex=MultiThreadedExecutor(); ex.add_node(n)\n"
+        "threading.Thread(target=ex.spin, daemon=True).start()\n"
+        "buf=Buffer(); TransformListener(buf, n); time.sleep(2.5)\n"
+        "g=pp.lookup_tf(n, buf, 'base_link', 'gripper_grasp_link').transform.translation\n"
+        f"m=pp.lookup_tf(n, buf, 'base_link', '{deck}').transform.translation\n"
+        "go=pp.default_grasp_offset()\n"
+        "print('TP %.4f %.4f %.4f %.4f %.4f %.4f %.4f' % (g.x,g.y,g.z,m.x,m.y,m.z,go))\n"
+        "rclpy.shutdown()\nEOF", timeout=25)
+    m = re.search(r"TP ([-\d. ]+)", out)
+    if not m:
+        return {"ok": False, "err": out[-300:]}
+    gx, gy, gz, mx, my, mz, go = [float(v) for v in m.group(1).split()]
+    return {"ok": True,
+            "tcp_mm": [round(gx*1000,1), round(gy*1000,1), round(gz*1000,1)],
+            "marker_mm": [round(mx*1000,1), round(my*1000,1), round(mz*1000,1)],
+            "dx_mm": round((gx-mx)*1000, 1),
+            "dy_mm": round((gy-my)*1000, 1),
+            "dz_grasp_mm": round((gz-(mz+go))*1000, 1),
+            "grasp_offset_mm": round(go*1000, 1)}
+
+
 # ───────────────────────── run executor ─────────────────────────
 
 ACTIVE_RUN = {"proc": None, "id": None}
@@ -403,6 +453,35 @@ class Handler(BaseHTTPRequestHandler):
             cfg.update(body.get("config", {}))
             save_config(cfg)
             self._json({"ok": True, "config": cfg})
+        elif p == "/api/teach/goto":
+            cmd = (f"ros2 run unchained_cell goto_deck {body['deck']} "
+                   f"--hover {body.get('hover', 0.15)} --vel 0.05")
+            rc, out = sh(cmd, timeout=240)
+            self._json({"ok": rc == 0, "out": out[-800:]})
+        elif p == "/api/teach/drag":
+            on = "true" if body.get("on") else "false"
+            rc, out = sh("ros2 service call /sdk_executor/drag_teach "
+                         f"std_srvs/srv/SetBool \"data: {on}\"", timeout=25)
+            self._json({"ok": "success=True" in out, "out": out[-400:]})
+        elif p == "/api/teach/pose":
+            self._json(teach_pose(body["deck"], body.get("plate_type", "20ml")))
+        elif p == "/api/teach/capture":
+            tp = teach_pose(body["deck"], body.get("plate_type", "20ml"))
+            if not tp.get("ok"):
+                self._json(tp); return
+            c = load_calib()
+            entry = c.get(body["deck"], {})
+            if body.get("what") == "xy":
+                entry["dx_mm"], entry["dy_mm"] = tp["dx_mm"], tp["dy_mm"]
+            elif body.get("what") == "z":
+                entry["dz_mm"] = tp["dz_grasp_mm"]
+            entry["plate_type"] = body.get("plate_type")
+            entry["captured"] = datetime.now().isoformat()
+            c[body["deck"]] = entry
+            save_calib(c)
+            self._json({"ok": True, "entry": entry, "calib": c, "pose": tp})
+        elif p == "/api/teach/calib":
+            self._json({"calib": load_calib()})
         elif p == "/api/bridge_param":
             # live-tune bridge params (speed/force) without relaunch
             outs = []

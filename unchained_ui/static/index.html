@@ -110,6 +110,28 @@
     </div>
   </div>
 
+  <div class="card">
+    <h2>Teach (manual calibration)</h2>
+    <div class="row"><span class="lbl">Deck</span><select id="tdeck"></select></div>
+    <div class="row"><span class="lbl">Plate type</span><select id="tplate"></select></div>
+    <div class="row">
+      <button onclick="teachGoto()">1. Go to hover</button>
+      <button onclick="api('/api/teach/drag',{on:true})">2. Drag ON</button>
+    </div>
+    <div class="row lbl">3. Hand-guide: center over the plate, test fit with the
+      jaw buttons (System panel), drag down to the perfect grasp height.</div>
+    <div class="row">
+      <button onclick="teachCapture('xy')">Capture XY (centered)</button>
+      <button onclick="teachCapture('z')">Capture Z (grasp height)</button>
+      <button onclick="teachPose()">Read deltas</button>
+    </div>
+    <div class="row">
+      <button onclick="api('/api/teach/drag',{on:false})">4. Drag OFF</button>
+      <button onclick="teachLedger()">Show calib ledger</button>
+    </div>
+    <pre id="teachout" style="display:none"></pre>
+  </div>
+
   <div class="card wide">
     <h2>Runs <span style="float:right"><button onclick="loadRuns()">Refresh</button></span></h2>
     <table id="runs"><tr><th>run</th><th>result</th><th>failed phase</th>
@@ -219,6 +241,26 @@ async function showLog(id){
   el.scrollTop=el.scrollHeight;
 }
 
+function tout(o){const el=$('teachout');el.style.display='block';
+  el.textContent=typeof o==='string'?o:JSON.stringify(o,null,1);}
+async function teachGoto(){
+  const r=await api('/api/teach/goto',{deck:$('tdeck').value});
+  tout(r.out||r);}
+async function teachPose(){
+  const r=await fetch('/api/teach/pose',{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({deck:$('tdeck').value,plate_type:$('tplate').value})});
+  tout(await r.json());}
+async function teachCapture(what){
+  const r=await fetch('/api/teach/capture',{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({deck:$('tdeck').value,plate_type:$('tplate').value,what})});
+  tout(await r.json());}
+async function teachLedger(){
+  const r=await fetch('/api/teach/calib',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:'{}'});
+  tout(await r.json());}
+
 async function init(){
   const r=await fetch('/api/config'); const j=await r.json();
   CFG=j.config; DECKS=j.decks; PLATES=j.plate_types;
@@ -226,6 +268,8 @@ async function init(){
   $('tgt').innerHTML=DECKS.map(d=>`<option>${d}</option>`).join('');
   $('tgt').value='deck_vortex_pos1';
   $('plate').innerHTML=PLATES.map(p=>`<option>${p}</option>`).join('');
+  $('tdeck').innerHTML=DECKS.map(d=>`<option>${d}</option>`).join('');
+  $('tplate').innerHTML=PLATES.map(p=>`<option>${p}</option>`).join('');
   renderCfg(); refresh(); loadRuns();
   setInterval(refresh,4000);
 }

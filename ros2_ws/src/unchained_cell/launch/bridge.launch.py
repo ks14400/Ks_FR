@@ -47,8 +47,8 @@ def launch_setup(context, *args, **kwargs):
     controller_name = f"fairino{robot_num}_controller"
 
     sdk_executor = Node(
-        package="fr_bridge",
-        executable="sdk_executor",
+        package="unchained_cell",
+        executable="unchained_bridge",
         name="sdk_executor",
         output="screen",
         parameters=[

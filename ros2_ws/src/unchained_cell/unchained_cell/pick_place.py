@@ -1611,6 +1611,32 @@ def main():
         tz += args.target_z_trim / 1000.0
         node.get_logger().warning(
             f"TARGET Z-TRIM {args.target_z_trim:+.1f}mm (hardware calibration)")
+
+    # ── TAUGHT PER-DECK CALIBRATION (drag-teach overlay, base_link mm) ──
+    # Written by the teach panel in unchained_ui: the user hand-guides the
+    # gripper to the perfect hover/grasp on the REAL deck and captures the
+    # delta vs the model. Applied on top of the model + trims. HARDWARE-ONLY:
+    # these are real-world deltas; the sim world is already exact.
+    if args.hardware:
+        import yaml as _yaml
+        _calib_file = os.path.expanduser("~/Ks_FR/unchained_ui/deck_calib.yaml")
+        if os.path.exists(_calib_file):
+            with open(_calib_file) as _f:
+                _calib = _yaml.safe_load(_f) or {}
+            for _name, _is_src in ((args.source, True), (args.target, False)):
+                _c = _calib.get(_name)
+                if not _c:
+                    continue
+                _dx = _c.get("dx_mm", 0.0) / 1000.0
+                _dy = _c.get("dy_mm", 0.0) / 1000.0
+                _dz = _c.get("dz_mm", 0.0) / 1000.0
+                if _is_src and not args.place_held:
+                    sx += _dx; sy += _dy; sz += _dz
+                elif not _is_src:
+                    tx += _dx; ty += _dy; tz += _dz
+                node.get_logger().warning(
+                    f"TAUGHT CALIB {_name}: dx={_dx*1000:+.1f} dy={_dy*1000:+.1f} "
+                    f"dz={_dz*1000:+.1f} mm applied ({'source' if _is_src else 'target'})")
     node.get_logger().info(f"Source deck in base_link: ({sx:+.3f}, {sy:+.3f}, {sz:+.3f})")
     node.get_logger().info(f"Target deck in base_link: ({tx:+.3f}, {ty:+.3f}, {tz:+.3f})")
 
