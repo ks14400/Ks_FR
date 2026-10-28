@@ -114,7 +114,11 @@ rviz with origin markers):
   part (`vention_pedestal_585mm`) origin: **(ΔX +465.5, ΔY +28.3,
   ΔZ +157.3)**, straight-line 492.2. Pedestal part origin = its TOP plane.
 - Robot flange center on pedestal top: (−113.0, 0, +392.0) from pedestal
-  origin, arm yawed **−45°** about vertical.
+  origin, arm yawed **−135°** about vertical (re-measured 2026-10-28: the
+  as-built arm sits 90° clockwise-from-above vs the original −45° model;
+  robot_mount_yaw_deg, GRASP_YAW_COMP_DEG=135 and HOME j1=+135° all updated
+  together — they must always move as a trio). Full matrix re-validated in
+  sim at −135°: 20ml all-8-pocket round trips + 8ml/96 spot checks, 24/24.
 - Heights above floor: scan origin **916.7**, pedestal top / robot base
   plane **945.0**, tabletop **756.0**, scan's lowest point **588.0**
   (bottom pad at scan coords (410.7, −328.6, −80.3)).

@@ -293,7 +293,7 @@ def generate_launch_description():
                               description="mock (default) | gazebo | hardware"),
         DeclareLaunchArgument("device_height", default_value="0.629675",
                               description="Height (m) of Unchained CAD origin above floor"),
-        DeclareLaunchArgument("robot_mount_yaw_deg", default_value="-45",
+        DeclareLaunchArgument("robot_mount_yaw_deg", default_value="-135",
                               description="Robot mounting yaw in degrees around "
                                           "vertical axis. -45 matches the real "
                                           "FR16 mounting (connector on the right, "
