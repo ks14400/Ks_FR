@@ -16,12 +16,15 @@ Visualization Manager:
     - Class: moveit_rviz_plugin/MotionPlanning
       Name: MotionPlanning
       Planned Path:
-        # HARDWARE MODE — planned path tinted green/translucent so you can
-        # always tell where MoveIt PLANS to go vs where the arm currently IS.
+        # HARDWARE MODE — trail/ghost DISABLED (2026-10-28, user request):
+        # the green trail obscured the real arm during observation. The
+        # planned-path ghost can be re-enabled here (Show Robot Visual: true,
+        # Show Trail: true) if plan-vs-actual comparison is ever needed again.
         Color Enabled: true
         Robot Color: 0; 255; 100
         Robot Alpha: 0.4
-        Show Trail: true
+        Show Robot Visual: false
+        Show Trail: false
         Trail Step Size: 1
         Loop Animation: false
         State Display Time: 0.05 s
