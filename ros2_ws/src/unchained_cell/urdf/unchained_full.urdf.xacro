@@ -373,7 +373,12 @@
   <joint name="pedestal_joint" type="fixed">
     <parent link="unchained_junior"/>
     <child link="pedestal"/>
-    <origin xyz="0.400 0.31533 1.13827" rpy="0 0 0"/>
+    <!-- AS-BUILT pedestal calibration (2026-10-28, user-observed after
+       bolting): +5mm away from the machine (local +Z) and 2deg clockwise
+       from above (-2deg about vertical = pitch slot in this Y-up frame).
+       NOTE: this also yaws the ARM riding the pedestal -> the coupled trio
+       (GRASP_YAW_COMP_DEG=137, HOME j1=+137deg) moved with it. -->
+    <origin xyz="0.400 0.31533 1.14327" rpy="0 ${-2*pi/180} 0"/>
   </joint>
 
   <!-- ================ FR16 robot (arm chain only, no world link) ================ -->

@@ -238,7 +238,7 @@ def hw_grip_mm_to_joint(real_mm):
 # We pre-rotate by +45deg about base Z (vertical) to cancel the mount yaw.
 # If robot_mount_yaw_deg changes, set GRASP_YAW_COMP_DEG = -robot_mount_yaw_deg
 # and re-verify jaw alignment in rviz.
-GRASP_YAW_COMP_DEG = 135.0  # = -robot_mount_yaw_deg (mount re-measured 2026-10-28: -135)
+GRASP_YAW_COMP_DEG = 137.0  # = -(mount -135 + pedestal -2) — as-built 2026-10-28
 
 
 def _quat_mul(a, b):
@@ -316,7 +316,7 @@ HOME_JOINTS = {
     # folded home pose faces the workspace the same way it did before the
     # mount-orientation fix. If robot_mount_yaw_deg changes, set j1 = -mount_yaw
     # (in rad) and re-verify in rviz.
-    "j1": 2.356,      # +135deg compensates -135deg mount → home faces workspace
+    "j1": 2.391,      # +137deg compensates -135 mount + -2 pedestal → home faces workspace
     "j2": -1.1,       # shoulder, matches pickup wrist family
     "j3": 1.9,        # elbow, matches pickup wrist family
     "j4": -2.4,       # wrist roll — KEY for plate-flat orientation
