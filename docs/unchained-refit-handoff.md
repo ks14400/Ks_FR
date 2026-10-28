@@ -13,8 +13,10 @@ CLAUDE.md rules.
 | 20ml LOAD from ALL 8 holder pockets → vortex pos1 | **PASS 8/8** (at final table position, see below) |
 | 8ml ROUND TRIP all 8 pockets ↔ vortex pos1 (2026-10-20) | **PASS 16/16** — load + retrieve every pocket, neighbors live |
 | 20ml ROUND TRIP all 8 pockets ↔ vortex pos1 (2026-10-20) | **PASS 16/16** — same loop |
-| sd rack | **NOT yet run** with the new grip/holder — next task |
-| Retrieve legs from vortex for pos7/pos8 sources | not spot-checked yet |
+| 96-well plate (type `96`, flat box 46.2mm, no vials, 2026-10-27) | **PASS 8/8** loads from all pockets |
+| MOUNT −135° re-validation (2026-10-28) | 20ml 16/16 (twice: scratch + live-watched), 8ml 16/16, 96 spots 4/4 |
+| sd rack | **EXCLUDED**: knuckle-vs-vial at BOTH grips (vials 54mm above pads, sim-verified) — needs ~20-25mm finger extensions |
+| Retrieve legs from vortex for pos7/pos8 sources | covered by the 16/16 matrices |
 | deck_9_10 with final geometry | not re-run since refit fixes |
 
 **Stock AG-145 fingers work. NO finger extensions needed** (earlier
