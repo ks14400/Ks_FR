@@ -1600,7 +1600,11 @@ def main():
     # ============================================================
     # PHASE 0b: go to home pose  (deterministic starting state)
     # ============================================================
-    if not _run_phase(node, phases, "go to home", "OMPL",
+    if args.place_held:
+        node.get_logger().warning(
+            "--place-held: SKIPPING the unconstrained go-home (real plate is "
+            "in the gripper; the tilt-constrained via-home will carry it)")
+    elif not _run_phase(node, phases, "go to home", "OMPL",
                       lambda: plan_arm_to_joints(node, mg, HOME_JOINTS, vel=args.vel,
                                                   exec_client=exec_client),
                       target_joints=", ".join(f"{k}={v:+.2f}" for k, v in HOME_JOINTS.items())):
