@@ -507,6 +507,15 @@ class Handler(BaseHTTPRequestHandler):
             tp = teach_pose(body["deck"], body.get("plate_type", "20ml"))
             if not tp.get("ok"):
                 self._json(tp); return
+            # sanity: a taught correction is millimetres, not decimetres.
+            # Huge deltas mean the dropdown deck isn't the deck being taught.
+            worst = max(abs(tp["dx_mm"]), abs(tp["dy_mm"]), abs(tp["dz_grasp_mm"]))
+            if worst > 50:
+                self._json({"ok": False, "error":
+                            f"capture REFUSED: delta {worst:.0f}mm vs {body['deck']} — "
+                            "is the Deck dropdown set to the deck you are "
+                            "actually teaching?", "pose": tp})
+                return
             c = load_calib()
             entry = c.get(body["deck"], {})
             if body.get("what") == "xy":
