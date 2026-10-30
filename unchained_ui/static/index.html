@@ -167,7 +167,9 @@ async function api(path,body){
   const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify(body||{})});
   const j=await r.json();
-  toast(j.error?('ERROR: '+j.error):(j.started?('started '+j.started):'ok'));
+  if(j.error) toast('ERROR: '+j.error);
+  else if(j.ok===false) toast('REFUSED/FAILED: '+String(j.out||'').slice(-160));
+  else toast(j.started?('started '+j.started):'ok');
   setTimeout(refresh,800); setTimeout(loadRuns,1200);
   return j;
 }
