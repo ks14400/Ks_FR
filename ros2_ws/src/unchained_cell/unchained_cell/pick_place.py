@@ -1636,10 +1636,31 @@ def main():
                 _dy = _c.get("dy_mm", 0.0) / 1000.0
                 _dz = _c.get("dz_mm_by_type", {}).get(
                     PLATE_TYPE, _c.get("dz_mm", 0.0)) / 1000.0
+                _drpy = _c.get("drpy_deg")
                 if _is_src and not args.place_held:
                     sx += _dx; sy += _dy; sz += _dz
+                    if _drpy and any(abs(a) > 0.05 for a in _drpy):
+                        _r, _p, _yw = [math.radians(a) for a in _drpy]
+                        _cr,_sr,_cp,_sp,_cy,_sy2=(math.cos(_r),math.sin(_r),
+                            math.cos(_p),math.sin(_p),math.cos(_yw),math.sin(_yw))
+                        _Rd=(_np.array([[_cy,-_sy2,0],[_sy2,_cy,0],[0,0,1]])
+                             @_np.array([[_cp,0,_sp],[0,1,0],[-_sp,0,_cp]])
+                             @_np.array([[1,0,0],[0,_cr,-_sr],[0,_sr,_cr]]))
+                        grasp_q = _R_to_quat(_Rd @ _quat_to_R(grasp_q))
+                        node.get_logger().warning(
+                            f"TAUGHT ANGLES {_name}: rpy={_drpy} deg applied to grasp")
                 elif not _is_src:
                     tx += _dx; ty += _dy; tz += _dz
+                    if _drpy and any(abs(a) > 0.05 for a in _drpy):
+                        _r, _p, _yw = [math.radians(a) for a in _drpy]
+                        _cr,_sr,_cp,_sp,_cy,_sy2=(math.cos(_r),math.sin(_r),
+                            math.cos(_p),math.sin(_p),math.cos(_yw),math.sin(_yw))
+                        _Rd=(_np.array([[_cy,-_sy2,0],[_sy2,_cy,0],[0,0,1]])
+                             @_np.array([[_cp,0,_sp],[0,1,0],[-_sp,0,_cp]])
+                             @_np.array([[1,0,0],[0,_cr,-_sr],[0,_sr,_cr]]))
+                        globals()["__taught_tgt_Rd"] = _Rd
+                        node.get_logger().warning(
+                            f"TAUGHT ANGLES {_name}: rpy={_drpy} deg will apply to place")
                 node.get_logger().warning(
                     f"TAUGHT CALIB {_name}: dx={_dx*1000:+.1f} dy={_dy*1000:+.1f} "
                     f"dz={_dz*1000:+.1f} mm applied ({'source' if _is_src else 'target'})")
@@ -1685,6 +1706,8 @@ def main():
     # handedness. Measured matrices cannot be.) Computed lazily after the
     # grasp; before it, fall back to DOWN_Q (only pick phases use it).
     _R_tgt = _quat_to_R(tgt_tf.transform.rotation)
+    if "__taught_tgt_Rd" in globals():
+        _R_tgt = globals().pop("__taught_tgt_Rd") @ _R_tgt
     place_q = None  # resolved post-grasp via _resolve_place_q()
 
     def _resolve_place_q():

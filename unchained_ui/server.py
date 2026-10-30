@@ -220,13 +220,24 @@ def teach_pose(deck, plate_type):
         "g=pp.lookup_tf(n, buf, 'base_link', 'gripper_grasp_link').transform.translation\n"
         f"m=pp.lookup_tf(n, buf, 'base_link', '{deck}').transform.translation\n"
         "go=pp.default_grasp_offset()\n"
-        "print('TP %.4f %.4f %.4f %.4f %.4f %.4f %.4f' % (g.x,g.y,g.z,m.x,m.y,m.z,go))\n"
+        "import math\n"
+        "import numpy as np\n"
+        "qg=pp.lookup_tf(n, buf, 'base_link', 'gripper_grasp_link').transform.rotation\n"
+        "Rg=pp._quat_to_R(qg); Rr=pp._quat_to_R(pp.DOWN_Q)\n"
+        "Rd=Rg@Rr.T\n"
+        "dy=math.degrees(math.atan2(Rd[1,0],Rd[0,0]))\n"
+        "dp=math.degrees(math.asin(max(-1,min(1,-Rd[2,0]))))\n"
+        "dr=math.degrees(math.atan2(Rd[2,1],Rd[2,2]))\n"
+        "print('TP %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.2f %.2f %.2f' % (g.x,g.y,g.z,m.x,m.y,m.z,go,dr,dp,dy))\n"
         "rclpy.shutdown()\nEOF", timeout=25)
     m = re.search(r"TP ([-\d. ]+)", out)
     if not m:
         return {"ok": False, "err": out[-300:]}
-    gx, gy, gz, mx, my, mz, go = [float(v) for v in m.group(1).split()]
+    vals = [float(v) for v in m.group(1).split()]
+    gx, gy, gz, mx, my, mz, go = vals[:7]
+    dr, dp, dyw = (vals[7:10] if len(vals) >= 10 else (0.0, 0.0, 0.0))
     return {"ok": True,
+            "drpy_deg": [round(dr, 2), round(dp, 2), round(dyw, 2)],
             "tcp_mm": [round(gx*1000,1), round(gy*1000,1), round(gz*1000,1)],
             "marker_mm": [round(mx*1000,1), round(my*1000,1), round(mz*1000,1)],
             "dx_mm": round((gx-mx)*1000, 1),
@@ -543,7 +554,7 @@ class Handler(BaseHTTPRequestHandler):
             # sanity: a taught correction is millimetres, not decimetres.
             # Huge deltas mean the dropdown deck isn't the deck being taught.
             worst = max(abs(tp["dx_mm"]), abs(tp["dy_mm"]), abs(tp["dz_grasp_mm"]))
-            if worst > 50:
+            if body.get("what") != "angles" and worst > 50:
                 self._json({"ok": False, "error":
                             f"capture REFUSED: delta {worst:.0f}mm vs {body['deck']} — "
                             "is the Deck dropdown set to the deck you are "
@@ -553,6 +564,8 @@ class Handler(BaseHTTPRequestHandler):
             entry = c.get(body["deck"], {})
             if body.get("what") == "xy":
                 entry["dx_mm"], entry["dy_mm"] = tp["dx_mm"], tp["dy_mm"]
+            elif body.get("what") == "angles":
+                entry["drpy_deg"] = tp["drpy_deg"]
             elif body.get("what") == "z":
                 # dz is PER PLATE TYPE (users teach different grip heights
                 # per rack); dx/dy are the deck's own position error.
