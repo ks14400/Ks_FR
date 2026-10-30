@@ -137,6 +137,28 @@ rviz with origin markers):
   NOTE: matrices were validated at tabletop 776.2/750 — 756.0 sits between
   the two proven heights; re-run one 20ml round-trip loop to confirm.
 
+## Teach/calibration system (2026-10-30 session)
+
+UI (unchained_ui, port 8420) now carries the full manual-calibration loop:
+Go-to-hover (real pick pipeline, --hover-only) -> drag and/or XYZ+RPY jog
+(collision-checked steps) -> FREE jaws (direct-to-bridge, force-limited,
+no model check — teach only) -> Capture XY / Z / ANGLES (guards refuse
+wrong-deck >50mm and wrong-moment >15deg) -> ledger unchained_ui/
+deck_calib.yaml: dx/dy + drpy per DECK, dz per PLATE TYPE. Hardware runs
+apply taught values to targets, grasp/place orientation, AND the virtual
+plate rest pose; the in-nest window covers the held plate.
+Drag-teach service lives in unchained_bridge (/sdk_executor/drag_teach).
+Scene singleton guard is in the LAUNCH FILE (4 duplicate-scene incidents).
+place_held = recovery/second-half runs; never moves before the virtual
+attach. Taught so far: deck_vortex_pos1 dx=-13.0 dy=-16.6 (dz: 20ml +15.2,
+8ml +0.1; drpy captured feature exists, not yet taught).
+KEY OPEN FINDING: the vortex dx/dy (~21mm) likely means the INSTRUMENT
+model position is off — teach a second instrument deck; if it agrees,
+bake the offset into the model and shrink the ledger to ~0.
+Last hardware state: 8ml grasp at the vortex SUCCEEDED (close+attach);
+lift was the last fixed bug; a clean full pick has not yet completed —
+first action next session: relaunch via app, full pick vortex->stand_pos4.
+
 ## Open items (in priority order)
 
 1. **sd rack** round trip (grip_center 19mm set but never run with new grip).
