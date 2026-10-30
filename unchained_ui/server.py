@@ -434,6 +434,39 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": True, "out": out[-500:]})
         elif p == "/api/run":
             self._json(start_run(body, cfg))
+        elif p == "/api/gripper_free":
+            # TEACH-ONLY free jaw control: no MoveIt planning/collision check,
+            # straight FollowJointTrajectory to the bridge gripper server.
+            # Safe by construction: the real AG-145 is force-limited and
+            # stalls on contact; the model is known-wrong during teaching.
+            mm = float(body.get("mm", 148))
+            mm = max(0.0, min(148.0, mm))
+            rc, out = sh(
+                "python3 - <<'EOF'\n"
+                "import sys, time\n"
+                f"sys.path.insert(0, '{REPO}/ros2_ws/src/unchained_cell')\n"
+                "import rclpy\n"
+                "from rclpy.node import Node\n"
+                "from rclpy.action import ActionClient\n"
+                "from control_msgs.action import FollowJointTrajectory\n"
+                "from trajectory_msgs.msg import JointTrajectoryPoint\n"
+                "from builtin_interfaces.msg import Duration\n"
+                "from unchained_cell.pick_place import hw_grip_mm_to_joint\n"
+                f"target = hw_grip_mm_to_joint({mm})\n"
+                "rclpy.init(); n=Node('ui_free_jaw')\n"
+                "ac=ActionClient(n, FollowJointTrajectory, '/gripper_controller/follow_joint_trajectory')\n"
+                "assert ac.wait_for_server(timeout_sec=8), 'bridge gripper server missing'\n"
+                "g=FollowJointTrajectory.Goal()\n"
+                "g.trajectory.joint_names=['gripper_finger1_joint']\n"
+                "pt=JointTrajectoryPoint(); pt.positions=[target]; pt.time_from_start=Duration(sec=2)\n"
+                "g.trajectory.points=[pt]\n"
+                "f=ac.send_goal_async(g); rclpy.spin_until_future_complete(n,f,timeout_sec=10)\n"
+                "gh=f.result(); assert gh and gh.accepted, 'goal rejected'\n"
+                "rf=gh.get_result_async(); rclpy.spin_until_future_complete(n,rf,timeout_sec=30)\n"
+                "print('FREEJAW_OK target_joint=%.3f' % target)\n"
+                "rclpy.shutdown()\nEOF", timeout=50)
+            self._json({"ok": "FREEJAW_OK" in out,
+                        "out": out.splitlines()[-1] if out.strip() else "no output"})
         elif p == "/api/gripper":
             act = body.get("act")
             if act == "mm":

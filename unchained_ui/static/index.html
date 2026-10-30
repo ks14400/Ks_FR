@@ -139,6 +139,12 @@
       <button onclick="teachCapture('z')">Capture Z (grasp height)</button>
       <button onclick="teachPose()">Read deltas</button>
     </div>
+    <div class="row"><span class="lbl">FREE jaws (teach only)</span>
+      <button onclick="api('/api/gripper_free',{mm:148})">OPEN</button>
+      <button onclick="api('/api/gripper_free',{mm:+$('tjaw').value})">to</button>
+      <input type="number" id="tjaw" value="84" step="0.5" title="real mm">
+      <span class="lbl" style="min-width:0">mm — force-limited, no model check</span>
+    </div>
     <div class="row">
       <button onclick="api('/api/teach/nest',{open:true})">Nest window OPEN (instrument decks)</button>
       <button onclick="api('/api/teach/nest',{open:false})">Nest window CLOSE</button>
