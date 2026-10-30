@@ -475,6 +475,32 @@ class Handler(BaseHTTPRequestHandler):
             rc, out = sh(cmd, timeout=90)
             tail = [l for l in out.splitlines() if "JOG" in l or "REFUSED" in l]
             self._json({"ok": rc == 0, "out": (tail[-1] if tail else out[-200:])})
+        elif p == "/api/teach/nest":
+            # SAME scoped allowance production picks use at instrument decks
+            # (4 finger links <-> unchained_junior) — teach-time toggle.
+            flag = "True" if body.get("open") else "False"
+            rc, out = sh(
+                "python3 - <<'EOF'\n"
+                "import sys, threading, time\n"
+                f"sys.path.insert(0, '{REPO}/ros2_ws/src/unchained_cell')\n"
+                "import rclpy\n"
+                "from rclpy.node import Node\n"
+                "from rclpy.executors import MultiThreadedExecutor\n"
+                "from moveit_msgs.srv import GetPlanningScene, ApplyPlanningScene\n"
+                "from unchained_cell import pick_place as pp\n"
+                "rclpy.init(); n=Node('ui_nest')\n"
+                "ex=MultiThreadedExecutor(); ex.add_node(n)\n"
+                "threading.Thread(target=ex.spin, daemon=True).start()\n"
+                "g=n.create_client(GetPlanningScene,'/get_planning_scene')\n"
+                "a=n.create_client(ApplyPlanningScene,'/apply_planning_scene')\n"
+                "g.wait_for_service(timeout_sec=10); a.wait_for_service(timeout_sec=10)\n"
+                "time.sleep(1)\n"
+                f"pp.set_nest_window(n, g, a, {flag})\n"
+                "print('NEST_OK')\n"
+                "rclpy.shutdown()\nEOF", timeout=30)
+            self._json({"ok": "NEST_OK" in out,
+                        "out": f"nest window {'OPEN' if flag=='True' else 'closed (strict)'}"
+                               if "NEST_OK" in out else out[-300:]})
         elif p == "/api/teach/pose":
             self._json(teach_pose(body["deck"], body.get("plate_type", "20ml")))
         elif p == "/api/teach/capture":

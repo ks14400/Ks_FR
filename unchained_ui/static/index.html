@@ -140,6 +140,10 @@
       <button onclick="teachPose()">Read deltas</button>
     </div>
     <div class="row">
+      <button onclick="api('/api/teach/nest',{open:true})">Nest window OPEN (instrument decks)</button>
+      <button onclick="api('/api/teach/nest',{open:false})">Nest window CLOSE</button>
+    </div>
+    <div class="row">
       <button onclick="api('/api/teach/drag',{on:false})">4. Drag OFF</button>
       <button onclick="teachLedger()">Show calib ledger</button>
     </div>
