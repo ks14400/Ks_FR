@@ -1017,19 +1017,27 @@ def _deck_rest_touch(deck_name):
     return ["unchained_junior"]     # instrument decks: plate sits in its nest
 
 
-def attach_plate_to_deck(node, scene_client, deck_name, current_parent=None):
+def attach_plate_to_deck(node, scene_client, deck_name, current_parent=None,
+                         offset_deck=None):
     """Attach plate to a deck link, bottom flush at the deck origin (Y-up).
 
     The rack mesh origin is at its BOTTOM CENTER, so unlike the legacy
     center-origin box (which needed a half-height lift), the mesh sits flush
     with y = 0 in the deck frame.
+
+    offset_deck: optional (x, y, z) in the DECK frame — used to place the
+    virtual plate at the TAUGHT real position instead of the model marker,
+    so grasp collision checks see the true relative geometry.
     """
     pose = Pose()
     # Per-deck float: nests keep the measured 5mm stand-off; stand/table
     # seat flush (0.5mm — visually touching, keeps FCL out of the
     # ambiguous zero-gap case at the grasp instant).
     pose.position.y = rest_float_for(deck_name)
-    pose.orientation = Quaternion(w=1.0)
+    if offset_deck is not None:
+        pose.position.x += offset_deck[0]
+        pose.position.y += offset_deck[1]
+        pose.position.z += offset_deck[2]
     return _attach_plate(node, scene_client, deck_name, pose, current_parent,
                          extra_touch=_deck_rest_touch(deck_name))
 
@@ -1120,6 +1128,27 @@ def attach_plate_to_gripper(node, scene_client, current_parent, buf=None,
     pose.orientation = ATTACH_Q
     return _attach_plate(
         node, scene_client, "gripper_grasp_link", pose, current_parent)
+
+
+def load_taught_calib():
+    """Taught per-deck calibration ledger (written by the UI teach panel)."""
+    path = os.path.expanduser("~/Ks_FR/unchained_ui/deck_calib.yaml")
+    if not os.path.exists(path):
+        return {}
+    import yaml as _yaml
+    with open(path) as f:
+        return _yaml.safe_load(f) or {}
+
+
+def taught_offset_deck_frame(node, buf, deck, calib_entry):
+    """Convert a taught base_link-frame (dx,dy,dz) mm delta into the deck's
+    local frame, for placing the VIRTUAL plate at the taught real position."""
+    d_base = _np.array([calib_entry.get("dx_mm", 0.0),
+                        calib_entry.get("dy_mm", 0.0),
+                        calib_entry.get("dz_mm_by_type", {}).get(
+                            PLATE_TYPE, calib_entry.get("dz_mm", 0.0))]) / 1000.0
+    R_deck = _quat_to_R(lookup_tf(node, buf, "base_link", deck).transform.rotation)
+    return (R_deck.T @ d_base).tolist()
 
 
 def goto_above_deck(node, mg, buf, deck, hover, vel, yaw_tol):
@@ -1591,9 +1620,18 @@ def main():
     elif args.no_plate:
         node.get_logger().warning("--no-plate: skipping plate spawn (diagnostic)")
     else:
+        _src_off = None
+        if args.hardware:
+            _tc = load_taught_calib().get(args.source)
+            if _tc:
+                _src_off = taught_offset_deck_frame(node, buf, args.source, _tc)
+                node.get_logger().warning(
+                    f"virtual plate at TAUGHT position for {args.source}: "
+                    f"deck-frame offset {[round(v*1000,1) for v in _src_off]} mm")
         ok = _run_phase(node, phases,
                         f"attach plate to {args.source}", "scene-diff",
-                        lambda: (attach_plate_to_deck(node, scene_client, args.source),
+                        lambda: (attach_plate_to_deck(node, scene_client, args.source,
+                                                      offset_deck=_src_off),
                                  "ok"),
                         link=args.source)
         if not ok: fail("scene-diff failed")
