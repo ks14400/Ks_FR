@@ -565,6 +565,11 @@ class Handler(BaseHTTPRequestHandler):
             if body.get("what") == "xy":
                 entry["dx_mm"], entry["dy_mm"] = tp["dx_mm"], tp["dy_mm"]
             elif body.get("what") == "angles":
+                if max(abs(a) for a in tp["drpy_deg"]) > 15:
+                    self._json({"ok": False, "error":
+                                f"angles capture REFUSED: {tp['drpy_deg']} deg — "
+                                "capture only AT the taught grasp pose"})
+                    return
                 entry["drpy_deg"] = tp["drpy_deg"]
             elif body.get("what") == "z":
                 # dz is PER PLATE TYPE (users teach different grip heights
