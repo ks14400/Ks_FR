@@ -3,5 +3,6 @@ deck_vortex_pos1:
   dy_mm: -16.6
   dz_mm_by_type:
     20ml: 15.2
-    8ml: 0.1
-  captured: 2026-10-30 (8ml dz raised +4.7mm per user after knuckle veto)
+    8ml: 1.1
+  captured: '2026-10-30 (8ml dz +1.0mm: cancels systematic 0.9mm high-ride in measured
+    hold)'
