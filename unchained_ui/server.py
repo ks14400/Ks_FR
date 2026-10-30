@@ -282,6 +282,8 @@ def start_run(body, cfg):
         cmd += " --pick-only"
     if action == "place_held":
         cmd += " --place-held"
+    if action == "hover_only":
+        cmd += " --hover-only"
 
     trims = cfg.get("deck_z_trim_mm", {}) or {}
     flags = {}
@@ -454,10 +456,13 @@ class Handler(BaseHTTPRequestHandler):
             save_config(cfg)
             self._json({"ok": True, "config": cfg})
         elif p == "/api/teach/goto":
-            cmd = (f"ros2 run unchained_cell goto_deck {body['deck']} "
-                   f"--hover {body.get('hover', 0.15)} --vel 0.05")
-            rc, out = sh(cmd, timeout=240)
-            self._json({"ok": rc == 0, "out": out[-800:]})
+            # SAME pipeline as a real pick (home -> IK-seeded approach ->
+            # jaws open), stopping at the hover. Trims + taught calib apply.
+            self._json(start_run({"action": "hover_only",
+                                  "source": body["deck"],
+                                  "target": body["deck"],
+                                  "plate_type": body.get("plate_type", "20ml"),
+                                  "hardware": True}, cfg))
         elif p == "/api/teach/drag":
             on = "true" if body.get("on") else "false"
             rc, out = sh("ros2 service call /sdk_executor/drag_teach "

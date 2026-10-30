@@ -244,8 +244,9 @@ async function showLog(id){
 function tout(o){const el=$('teachout');el.style.display='block';
   el.textContent=typeof o==='string'?o:JSON.stringify(o,null,1);}
 async function teachGoto(){
-  const r=await api('/api/teach/goto',{deck:$('tdeck').value});
-  tout(r.out||r);}
+  const r=await api('/api/teach/goto',{deck:$('tdeck').value,
+    plate_type:$('tplate').value});
+  tout(r.started?('hover run started: '+r.started+' — watch the arm; teach when it stops'):r);}
 async function teachPose(){
   const r=await fetch('/api/teach/pose',{method:'POST',
     headers:{'Content-Type':'application/json'},

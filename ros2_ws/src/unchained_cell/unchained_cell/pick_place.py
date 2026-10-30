@@ -1397,6 +1397,11 @@ def main():
                         "keeps fingers along the plate's short side but gives IK "
                         "room. Tighten to 0.15 if grip is rotating too far; loosen "
                         "to 1.0 if a deck refuses to plan")
+    p.add_argument("--hover-only", action="store_true",
+                   help="Stop at the hover above the source with the jaws "
+                        "open — identical phases to a real pick (home, "
+                        "IK-seeded approach, trims+taught calib applied) "
+                        "minus descend/close. Used by the teach workflow.")
     p.add_argument("--pick-only", action="store_true",
                    help="Stop after the carry reaches the via-home pose: the "
                         "plate stays in the gripper (and attached in the "
@@ -1730,6 +1735,15 @@ def main():
                           lambda: plan_gripper(node, mg, GRIPPER_OPEN),
                           target_joint=GRIPPER_OPEN):
             fail("open gripper failed")
+
+    if args.hover_only:
+        node.get_logger().warning(
+            "--hover-only: stopped at the hover, jaws open — ready for "
+            "drag-teach (enable drag from the Teach panel)")
+        _print_summary(node, phases)
+        node.get_logger().info("DONE (hover-only)")
+        rclpy.shutdown()
+        return
 
     if _is_instrument_deck(args.source) and not args.place_held:
         set_nest_window(node, get_scene_client, scene_client, True)
