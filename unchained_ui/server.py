@@ -468,6 +468,13 @@ class Handler(BaseHTTPRequestHandler):
             rc, out = sh("ros2 service call /sdk_executor/drag_teach "
                          f"std_srvs/srv/SetBool \"data: {on}\"", timeout=25)
             self._json({"ok": "success=True" in out, "out": out[-400:]})
+        elif p == "/api/jog":
+            d = body.get("d", {})
+            cmd = "ros2 run unchained_cell jog_tcp " + " ".join(
+                f"--{k} {v}" for k, v in d.items() if v)
+            rc, out = sh(cmd, timeout=90)
+            tail = [l for l in out.splitlines() if "JOG" in l or "REFUSED" in l]
+            self._json({"ok": rc == 0, "out": (tail[-1] if tail else out[-200:])})
         elif p == "/api/teach/pose":
             self._json(teach_pose(body["deck"], body.get("plate_type", "20ml")))
         elif p == "/api/teach/capture":

@@ -120,6 +120,20 @@
     </div>
     <div class="row lbl">3. Hand-guide: center over the plate, test fit with the
       jaw buttons (System panel), drag down to the perfect grasp height.</div>
+    <div class="row"><span class="lbl">Jog step</span>
+      <input type="number" id="jog_mm" value="2" step="0.5" title="mm"> mm
+      <input type="number" id="jog_deg" value="1" step="0.5" title="deg"> deg
+    </div>
+    <div class="row">
+      <button onclick="jog({dx:+J()})">X+</button><button onclick="jog({dx:-J()})">X−</button>
+      <button onclick="jog({dy:+J()})">Y+</button><button onclick="jog({dy:-J()})">Y−</button>
+      <button onclick="jog({dz:+J()})">Z↑</button><button onclick="jog({dz:-J()})">Z↓</button>
+    </div>
+    <div class="row">
+      <button onclick="jog({droll:+JD()})">R+</button><button onclick="jog({droll:-JD()})">R−</button>
+      <button onclick="jog({dpitch:+JD()})">P+</button><button onclick="jog({dpitch:-JD()})">P−</button>
+      <button onclick="jog({dyaw:+JD()})">Y+°</button><button onclick="jog({dyaw:-JD()})">Y−°</button>
+    </div>
     <div class="row">
       <button onclick="teachCapture('xy')">Capture XY (centered)</button>
       <button onclick="teachCapture('z')">Capture Z (grasp height)</button>
@@ -241,6 +255,11 @@ async function showLog(id){
   el.scrollTop=el.scrollHeight;
 }
 
+const J=()=>+$('jog_mm').value, JD=()=>+$('jog_deg').value;
+async function jog(d){
+  const r=await fetch('/api/jog',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({d})});
+  const j=await r.json(); tout(j.out||j);}
 function tout(o){const el=$('teachout');el.style.display='block';
   el.textContent=typeof o==='string'?o:JSON.stringify(o,null,1);}
 async function teachGoto(){
