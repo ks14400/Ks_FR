@@ -2051,7 +2051,13 @@ if __name__ == "__main__":
 # and restore immediately after. Plate & arm stay fully checked; stand and
 # table decks never use this (they pass fully strict).
 # ════════════════════════════════════════════════════════════════
+# The held PLATE is part of the window too: inside the nest the plate is
+# GUIDED by the nest walls (real contact by design), and at taught decks
+# the virtual plate rides at the taught offset while the virtual nest stays
+# at the model position — without this, the lift start-state is "plate in
+# nest wall" (measured 2026-10-30: lift 0.0% after a successful grasp).
 _NEST_WINDOW_LINKS = [
+    "the_plate",
     "gripper_finger1_finger_tip_link", "gripper_finger2_finger_tip_link",
     "gripper_finger1_finger_link", "gripper_finger2_finger_link",
 ]
