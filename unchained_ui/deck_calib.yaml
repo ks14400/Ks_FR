@@ -1,0 +1,7 @@
+deck_vortex_pos1:
+  dx_mm: -13.0
+  dy_mm: -16.6
+  dz_mm_by_type:
+    20ml: 15.2
+    8ml: -4.6
+  captured: '2026-10-30T14:28 (xy: 8ml teach; dz: per-type)'

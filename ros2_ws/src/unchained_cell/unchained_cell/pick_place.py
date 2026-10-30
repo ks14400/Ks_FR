@@ -1634,7 +1634,8 @@ def main():
                     continue
                 _dx = _c.get("dx_mm", 0.0) / 1000.0
                 _dy = _c.get("dy_mm", 0.0) / 1000.0
-                _dz = _c.get("dz_mm", 0.0) / 1000.0
+                _dz = _c.get("dz_mm_by_type", {}).get(
+                    PLATE_TYPE, _c.get("dz_mm", 0.0)) / 1000.0
                 if _is_src and not args.place_held:
                     sx += _dx; sy += _dy; sz += _dz
                 elif not _is_src:

@@ -554,7 +554,10 @@ class Handler(BaseHTTPRequestHandler):
             if body.get("what") == "xy":
                 entry["dx_mm"], entry["dy_mm"] = tp["dx_mm"], tp["dy_mm"]
             elif body.get("what") == "z":
-                entry["dz_mm"] = tp["dz_grasp_mm"]
+                # dz is PER PLATE TYPE (users teach different grip heights
+                # per rack); dx/dy are the deck's own position error.
+                entry.setdefault("dz_mm_by_type", {})[
+                    body.get("plate_type", "20ml")] = tp["dz_grasp_mm"]
             entry["plate_type"] = body.get("plate_type")
             entry["captured"] = datetime.now().isoformat()
             c[body["deck"]] = entry
