@@ -27,7 +27,39 @@ from moveit_configs_utils import MoveItConfigsBuilder
 import xacro
 
 
+def _kill_stale_scene_42():
+    """Exactly ONE scene per domain: kill any existing domain-42 scene
+    processes before bringing up this one. Lives in the launch file so EVERY
+    entry path (app button, run_unchained.sh, bare ros2 launch) is guarded —
+    duplicate scenes (twin move_groups fighting over services) corrupted
+    four hardware sessions before this."""
+    import re as _re
+    import signal as _signal
+    import subprocess as _sp
+    import time as _time
+    me = os.getpid()
+    pat = ("unchained_full.launch|move_group --ros|rviz2|robot_state_pub|"
+           "mimic_repeater|ros2_control_node|static_transform|joint_state|spawner")
+    r = _sp.run(["pgrep", "-f", pat], capture_output=True, text=True)
+    killed = 0
+    for pid in r.stdout.split():
+        if int(pid) == me:
+            continue
+        try:
+            with open(f"/proc/{pid}/environ", "rb") as f:
+                env = f.read().decode(errors="ignore")
+            if _re.search(r"ROS_DOMAIN_ID=42(\x00|$)", env) or "ROS_DOMAIN_ID=42" in env:
+                os.kill(int(pid), _signal.SIGKILL)
+                killed += 1
+        except (OSError, ValueError):
+            pass
+    if killed:
+        print(f"[unchained_full.launch] killed {killed} stale domain-42 scene process(es)")
+        _time.sleep(2.0)
+
+
 def launch_setup(context, *args, **kwargs):
+    _kill_stale_scene_42()
     test_cell_share = get_package_share_directory("unchained_cell")
     fairino_desc_share = get_package_share_directory("fairino_description")
 
