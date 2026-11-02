@@ -249,6 +249,7 @@ def teach_pose(deck, plate_type):
 # ───────────────────────── run executor ─────────────────────────
 
 ACTIVE_RUN = {"proc": None, "id": None}
+LAST_SCENE_LAUNCH = 0.0
 RUN_LOCK = threading.Lock()
 
 PHASE_RE = re.compile(r"\[(OK|FAIL)\s*\]\s+(.+?)\s{2,}(\S+)\s+([\d.]+)s\s+(.*)")
@@ -412,6 +413,19 @@ class Handler(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(n) or b"{}")
         p = self.path
         cfg = load_config()
+        global LAST_SCENE_LAUNCH
+        if p in ("/api/launch/scene", "/api/launch/sim"):
+            # debounce: two near-simultaneous launches race the kill-stale
+            # guard (each kills before the other's nodes exist -> twins;
+            # 5th duplicate-scene incident, 2026-11-02).
+            now = time.time()
+            if now - LAST_SCENE_LAUNCH < 25:
+                self._json({"ok": False,
+                            "error": f"scene launch already in progress "
+                                     f"({int(now-LAST_SCENE_LAUNCH)}s ago) — "
+                                     "wait for rviz, check header lights"})
+                return
+            LAST_SCENE_LAUNCH = now
         if p == "/api/launch/bridge":
             spawn_detached(
                 f"{REPO}/run_unchained.sh bridge "
