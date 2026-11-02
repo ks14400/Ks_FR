@@ -385,6 +385,20 @@ PLATE_TOUCH_GRIPPER_LINKS = [
     "gripper_finger1_finger_tip_link", "gripper_finger2_finger_tip_link",
     "gripper_finger1_finger_link", "gripper_finger2_finger_link",
 ]
+# HARDWARE-ONLY extension (2026-11-02, user decision): at a HUMAN-TAUGHT
+# grasp the gripper<->plate interface is verified by direct observation and
+# jaw-fit testing — a better sensor than the model's +-2mm meshes, whose
+# sub-millimetre knuckle-vs-vial verdicts blocked three physically-clean
+# lifts (0.9/0.56mm phantom contacts). On hardware runs the HELD plate may
+# touch the whole gripper; plate<->instrument/world and arm<->everything
+# stay fully strict, and SIM keeps the strict interface so validation
+# matrices still catch real geometry errors (e.g. the sd-rack verdict).
+PLATE_TOUCH_GRIPPER_LINKS_HW = PLATE_TOUCH_GRIPPER_LINKS + [
+    "gripper_finger1_inner_knuckle_link", "gripper_finger2_inner_knuckle_link",
+    "gripper_finger1_knuckle_link", "gripper_finger2_knuckle_link",
+    "gripper_base_link",
+]
+HW_RUN = False  # set by main() from --hardware; used at gripper-attach time
 DEFAULT_TOUCH_LINKS = PLATE_TOUCH_GRIPPER_LINKS + [
     # deck markers only (visual-only links, no collision geometry anyway).
     # Structural surfaces the plate legitimately RESTS on (unchained_junior,
@@ -999,7 +1013,10 @@ def _attach_plate(node, scene_client, link_name, pose, current_parent=None,
     aco.object.meshes.append(_load_plate_mesh())
     aco.object.mesh_poses.append(pose)
     aco.object.operation = CollisionObject.ADD
-    aco.touch_links = DEFAULT_TOUCH_LINKS + [link_name] + (extra_touch or [])
+    touch = DEFAULT_TOUCH_LINKS + [link_name] + (extra_touch or [])
+    if HW_RUN and link_name == "gripper_grasp_link":
+        touch = touch + PLATE_TOUCH_GRIPPER_LINKS_HW
+    aco.touch_links = touch
 
     ps = PlanningScene(); ps.is_diff = True
     ps.robot_state.is_diff = True
@@ -1499,6 +1516,9 @@ def main():
             print(f"[gripper] --grip-mm {args.grip_mm} -> grip-value "
                   f"{args.grip_value:.3f} (stroke {GRIPPER_STROKE_MM:.0f}mm)",
                   file=sys.stderr)
+
+    global HW_RUN
+    HW_RUN = bool(args.hardware)
 
     # ── Hardware velocity clamp ──
     # When running against real hardware, refuse to use sim-typical fast speeds.
