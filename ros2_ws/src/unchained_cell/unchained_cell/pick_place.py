@@ -866,12 +866,14 @@ def plan_gripper(node, mg, joint_value, vel=0.5):
     return _send_and_wait(node, mg, goal)
 
 
-def _apply_scene(node, scene_client, ps, timeout=5.0):
+def _apply_scene(node, scene_client, ps, timeout=5.0, quiet_failure=False):
     """Push a PlanningScene diff via the /apply_planning_scene SERVICE.
 
     Synchronous (blocks until MoveIt applies the change). Relies on a
     MultiThreadedExecutor spinning the node in a background thread, so the
     service response callback can run concurrently with our blocking wait.
+    quiet_failure: expected-failure diffs (e.g. purge detaching from links
+    that hold nothing on a fresh scene) log at debug, not ERROR.
     """
     req = ApplyPlanningScene.Request()
     req.scene = ps
@@ -884,7 +886,11 @@ def _apply_scene(node, scene_client, ps, timeout=5.0):
         return False
     result = future.result()
     if result is None or not result.success:
-        node.get_logger().error("apply_planning_scene returned failure")
+        if quiet_failure:
+            node.get_logger().debug(
+                "apply_planning_scene returned failure (expected: no-op diff)")
+        else:
+            node.get_logger().error("apply_planning_scene returned failure")
         return False
     return True
 
@@ -968,7 +974,7 @@ def purge_plate(node, scene_client):
         ps = PlanningScene(); ps.is_diff = True
         ps.robot_state.is_diff = True
         ps.robot_state.attached_collision_objects.append(rm)
-        _apply_scene(node, scene_client, ps)
+        _apply_scene(node, scene_client, ps, quiet_failure=True)
 
     # 2. NOW remove from the world: the plate (possibly just dropped there by
     #    a detach) and every obstacle plate any previous run may have spawned
@@ -979,7 +985,7 @@ def purge_plate(node, scene_client):
         rm_world = CollisionObject(); rm_world.id = oid
         rm_world.operation = CollisionObject.REMOVE
         ps2.world.collision_objects.append(rm_world)
-    _apply_scene(node, scene_client, ps2)
+    _apply_scene(node, scene_client, ps2, quiet_failure=True)
     return True
 
 
@@ -1312,6 +1318,22 @@ def _extract_travel(info_str):
     return float(m.group(1)) if m else 0.0
 
 
+def _clean_exit(code):
+    """Deterministic process exit. rclpy.shutdown() + interpreter teardown
+    races the daemon MultiThreadedExecutor thread inside the rcl C layer
+    ('terminate called without an active exception', abort, rc 250) on an
+    otherwise clean run — seen intermittently since the first sim sessions.
+    Flush output (the log is the interface) and use os._exit to skip the
+    racy teardown entirely."""
+    sys.stdout.flush()
+    sys.stderr.flush()
+    try:
+        rclpy.try_shutdown()
+    except Exception:
+        pass
+    os._exit(code)
+
+
 def _print_summary(node, phases):
     bar = "=" * 64
     node.get_logger().info(bar)
@@ -1566,39 +1588,39 @@ def main():
     node.get_logger().info("Waiting for /move_action ...")
     if not mg.wait_for_server(timeout_sec=15.0):
         node.get_logger().error("move_group not available")
-        rclpy.shutdown(); sys.exit(1)
+        _clean_exit(1)
 
     node.get_logger().info("Waiting for /execute_trajectory ...")
     if not exec_client.wait_for_server(timeout_sec=15.0):
         node.get_logger().error("execute_trajectory not available")
-        rclpy.shutdown(); sys.exit(1)
+        _clean_exit(1)
 
     node.get_logger().info("Waiting for /apply_planning_scene service ...")
     if not scene_client.wait_for_service(timeout_sec=15.0):
         node.get_logger().error("apply_planning_scene service not available")
-        rclpy.shutdown(); sys.exit(1)
+        _clean_exit(1)
 
     node.get_logger().info("Waiting for /compute_cartesian_path service ...")
     if not cart_client.wait_for_service(timeout_sec=15.0):
         node.get_logger().error("compute_cartesian_path not available")
-        rclpy.shutdown(); sys.exit(1)
+        _clean_exit(1)
 
     node.get_logger().info("Waiting for /compute_ik service ...")
     if not ik_client.wait_for_service(timeout_sec=15.0):
         node.get_logger().error("compute_ik not available")
-        rclpy.shutdown(); sys.exit(1)
+        _clean_exit(1)
 
     node.get_logger().info("Waiting for /get_planning_scene service ...")
     if not get_scene_client.wait_for_service(timeout_sec=15.0):
         node.get_logger().error("get_planning_scene not available")
-        rclpy.shutdown(); sys.exit(1)
+        _clean_exit(1)
 
     phases = []  # phase log for the end-of-run summary
 
     def fail(msg):
         node.get_logger().error(msg)
         _print_summary(node, phases)
-        rclpy.shutdown(); sys.exit(1)
+        _clean_exit(1)
 
     # ============================================================
     # PHASE 0a: purge any stale plate state  (idempotent reset)
@@ -1828,8 +1850,7 @@ def main():
             "drag-teach (enable drag from the Teach panel)")
         _print_summary(node, phases)
         node.get_logger().info("DONE (hover-only)")
-        rclpy.shutdown()
-        return
+        _clean_exit(0)
 
     if _is_instrument_deck(args.source) and not args.place_held:
         set_nest_window(node, get_scene_client, scene_client, True)
@@ -1931,8 +1952,7 @@ def main():
             "(scene keeps the attachment; continue with --place-held)")
         _print_summary(node, phases)
         node.get_logger().info("DONE (pick-only)")
-        rclpy.shutdown()
-        return
+        _clean_exit(0)
 
     # ============================================================
     # PHASE: transit above target  (OMPL — now from home, much shorter swing)
@@ -2058,7 +2078,7 @@ def main():
 
     _print_summary(node, phases)
     node.get_logger().info("DONE")
-    rclpy.shutdown()
+    _clean_exit(0)
 
 
 if __name__ == "__main__":
