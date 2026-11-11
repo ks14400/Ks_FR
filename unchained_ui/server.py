@@ -303,9 +303,13 @@ def start_run(body, cfg):
         cmd += f" --source-z-trim {trims[src]}"; flags["source_z_trim"] = trims[src]
     if trims.get(tgt):
         cmd += f" --target-z-trim {trims[tgt]}"; flags["target_z_trim"] = trims[tgt]
-    # grip override: long side picks come from stand pockets, short from others
+    # grip override: HARDWARE ONLY. Config grip widths are TRAINED REAL-mm
+    # values (hw-cal clamps, e.g. long 122 real ~= 126.7 model). In sim
+    # --grip-mm means MODEL mm, where 122 over-closes into vial racks'
+    # knuckle zone (2026-11-10 Epyon campaign failure). Sim always uses the
+    # validated AUTO widths; hardware keeps the trained values.
     grip = None
-    if action != "place_held" and not dry:
+    if action != "place_held" and not dry and hardware:
         grip = (cfg.get("grip_mm_long") if src.startswith("stand_pos")
                 else cfg.get("grip_mm_short"))
         if grip:
