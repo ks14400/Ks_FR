@@ -51,7 +51,10 @@ DEFAULT_CONFIG = {
     # trim (table correction is baked into table_z).
     "deck_z_trim_mm": {"deck_vortex_pos1": 2.0},
     "grip_mm_long": 122.0,     # long-side clamp (stand picks), REAL mm on hw
-    "grip_mm_short": 0.0,      # 0 = AUTO (83.5 real)
+    "grip_mm_short": 83.5,     # short-side clamp (vortex picks), REAL mm on hw
+    # per-plate-type overrides (REAL mm, hardware only; empty = side default)
+    "grip_mm_long_by_type": {"8ml": None, "20ml": None, "sd": None, "96": None},
+    "grip_mm_short_by_type": {"8ml": None, "20ml": None, "sd": None, "96": None},
     "pre_release_lift_m": 0.005,
     "pick_lift_m": 0.004,
     "bridge_movej_vel_pct": 10,
@@ -246,6 +249,18 @@ def teach_pose(deck, plate_type):
             "grasp_offset_mm": round(go*1000, 1)}
 
 
+def pick_grip_mm(cfg, src, plate_type):
+    """Hardware grip width for a pick: per-type override first, then the
+    side default. Side = LONG at stand pockets, SHORT elsewhere (vortex/
+    instrument nests). Returns None/0 for AUTO."""
+    side = "long" if src.startswith("stand_pos") else "short"
+    by_type = cfg.get(f"grip_mm_{side}_by_type") or {}
+    v = by_type.get(plate_type)
+    if v in (None, "", 0):
+        v = cfg.get(f"grip_mm_{side}")
+    return v or None
+
+
 # ───────────────────────── run executor ─────────────────────────
 
 ACTIVE_RUN = {"proc": None, "id": None}
@@ -310,8 +325,7 @@ def start_run(body, cfg):
     # validated AUTO widths; hardware keeps the trained values.
     grip = None
     if action != "place_held" and not dry and hardware:
-        grip = (cfg.get("grip_mm_long") if src.startswith("stand_pos")
-                else cfg.get("grip_mm_short"))
+        grip = pick_grip_mm(cfg, src, plate)
         if grip:
             cmd += f" --grip-mm {grip}"; flags["grip_mm"] = grip
     if cfg.get("pre_release_lift_m") not in (None, "", 0.015):

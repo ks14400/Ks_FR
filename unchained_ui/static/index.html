@@ -103,6 +103,8 @@
   <div class="card">
     <h2>Parameters <span style="float:right"><button onclick="saveCfg()">Save</button></span></h2>
     <div id="params"></div>
+    <h2 style="margin-top:10px">Per-type grip widths (REAL mm, hardware; blank = side default)</h2>
+    <div id="gripgrid"></div>
     <h2 style="margin-top:10px">Deck Z-trims (mm)</h2>
     <div id="trims"></div>
     <div class="row">
@@ -207,6 +209,22 @@ const PARAM_DEFS=[
   ['bridge_gripper_force_pct','gripper force %'],
 ];
 
+function renderGrips(){
+  const types=PLATES;
+  const gl=CFG.grip_mm_long_by_type||{}, gs=CFG.grip_mm_short_by_type||{};
+  $('gripgrid').innerHTML='<div class="row"><span class="lbl"></span>'+
+    '<span style="width:90px">LONG (stand)</span><span style="width:90px">SHORT (vortex)</span></div>'+
+    types.map(t=>`<div class="row"><span class="lbl">${t}</span>
+      <input type="number" step="0.5" id="gl_${t}" value="${gl[t]??''}" style="width:90px">
+      <input type="number" step="0.5" id="gs_${t}" value="${gs[t]??''}" style="width:90px"></div>`).join('');
+}
+function collectGrips(){
+  const gl={}, gs={};
+  PLATES.forEach(t=>{
+    const a=$('gl_'+t).value, b=$('gs_'+t).value;
+    gl[t]=a===''?null:+a; gs[t]=b===''?null:+b;});
+  CFG.grip_mm_long_by_type=gl; CFG.grip_mm_short_by_type=gs;
+}
 function renderCfg(){
   $('params').innerHTML=PARAM_DEFS.map(([k,l])=>
     `<div class="row"><span class="lbl">${l}</span>
@@ -220,6 +238,7 @@ function renderCfg(){
 
 function collectCfg(){
   PARAM_DEFS.forEach(([k])=>{const v=$('cfg_'+k).value; CFG[k]=v===''?null:+v;});
+  collectGrips();
   const tr={};
   DECKS.filter(d=>!d.startsWith('stand_pos')&&d!=='table_top').forEach(d=>{
     const v=+($('trim_'+d).value||0); if(v) tr[d]=v;});
@@ -303,7 +322,7 @@ async function init(){
   $('plate').innerHTML=PLATES.map(p=>`<option>${p}</option>`).join('');
   $('tdeck').innerHTML=DECKS.map(d=>`<option>${d}</option>`).join('');
   $('tplate').innerHTML=PLATES.map(p=>`<option>${p}</option>`).join('');
-  renderCfg(); refresh(); loadRuns();
+  renderCfg(); renderGrips(); refresh(); loadRuns();
   setInterval(refresh,4000);
 }
 init();
