@@ -605,6 +605,13 @@ class SDKExecutorNode(Node):
                 + (" (final)" if is_final else "")
             )
 
+            # Re-read speed params each segment so live tuning works
+            # (ros2 param set /sdk_executor movej_vel_pct N — same pattern
+            # as the gripper params; cached-at-startup values ignored sets).
+            vel_now = self.get_parameter(
+                "movej_vel_pct").get_parameter_value().double_value
+            acc_now = self.get_parameter(
+                "movej_acc_pct").get_parameter_value().double_value
             with self._robot_lock:
                 # MoveJ with blend radius (ovl) to chain smoothly between segments
                 # ovl=100.0 means full-speed blend. Use lower for final point.
@@ -612,8 +619,8 @@ class SDKExecutorNode(Node):
                     joints_deg,
                     0, 0,  # tool, user
                     [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                    self.movej_vel,
-                    self.movej_acc,
+                    vel_now,
+                    acc_now,
                     100.0,  # ovl (blend)
                 )
 

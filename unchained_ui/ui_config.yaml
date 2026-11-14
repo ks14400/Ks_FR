@@ -1,8 +1,8 @@
 deck_z_trim_mm: {}
-grip_mm_long: 122.0
+grip_mm_long: 122
 grip_mm_short: 83.5
 pre_release_lift_m: 0.005
 pick_lift_m: 0.004
-bridge_movej_vel_pct: 10
-bridge_movej_acc_pct: 15
+bridge_movej_vel_pct: 20
+bridge_movej_acc_pct: 30
 bridge_gripper_force_pct: 40
