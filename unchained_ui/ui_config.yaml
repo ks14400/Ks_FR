@@ -6,3 +6,13 @@ pick_lift_m: 0.004
 bridge_movej_vel_pct: 30
 bridge_movej_acc_pct: 45
 bridge_gripper_force_pct: 40
+grip_mm_long_by_type:
+  8ml: null
+  20ml: 118.0
+  sd: null
+  '96': null
+grip_mm_short_by_type:
+  8ml: null
+  20ml: null
+  sd: null
+  '96': null

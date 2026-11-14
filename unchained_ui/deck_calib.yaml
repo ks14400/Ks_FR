@@ -6,3 +6,14 @@ deck_vortex_pos1:
     8ml: 1.1
   captured: '2026-10-30 (8ml dz +1.0mm: cancels systematic 0.9mm high-ride in measured
     hold)'
+stand_pos4:
+  dx_mm: 1.5
+  dy_mm: -1.9
+  plate_type: 20ml
+  captured: '2026-11-13T17:54:33.483956'
+  dz_mm_by_type:
+    20ml: 10.4
+  drpy_deg:
+  - -0.15
+  - -0.78
+  - 0.72

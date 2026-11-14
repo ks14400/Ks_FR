@@ -1701,6 +1701,11 @@ def main():
         node.get_logger().warning(
             f"TARGET Z-TRIM {args.target_z_trim:+.1f}mm (hardware calibration)")
 
+    # Grasp orientation starts at the mount-compensated down pose; taught
+    # per-deck ANGLES (below) may rotate it. Must be defined BEFORE the
+    # calib block (first angles-capture deck crashed here, 2026-11-13).
+    grasp_q = DOWN_Q
+
     # ── TAUGHT PER-DECK CALIBRATION (drag-teach overlay, base_link mm) ──
     # Written by the teach panel in unchained_ui: the user hand-guides the
     # gripper to the perfect hover/grasp on the REAL deck and captures the
@@ -1759,8 +1764,9 @@ def main():
     # the grasp) with the knuckles into the vial tops. So: project the pad
     # axis onto the source marker's axes and close to that span + 0.6mm.
     # An explicit --grip-mm / non-default --grip-value still overrides.
-    grasp_q = DOWN_Q
-    _pad_axis = _quat_to_R(grasp_q)[:, 0]         # pad-separation axis
+    # (grasp_q already set above — and possibly rotated by taught angles;
+    # the pad-axis projection uses the NOMINAL down pose on purpose.)
+    _pad_axis = _quat_to_R(DOWN_Q)[:, 0]          # pad-separation axis
     _Rsrc = _quat_to_R(src_tf.transform.rotation)
     _along_long = abs(float(_pad_axis @ _Rsrc[:, 2]))   # marker Z = long axis
     _along_short = abs(float(_pad_axis @ _Rsrc[:, 0]))  # marker X = short axis
