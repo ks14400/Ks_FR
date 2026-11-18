@@ -7,12 +7,12 @@ deck_vortex_pos1:
   captured: '2026-10-30; 2026-11-18 +4.0mm both types: migrated to absolute-Z semantics
     (pick_lift no longer added on taught decks) - preserves proven pick heights'
 stand_pos4:
-  dx_mm: 1.5
-  dy_mm: -1.9
+  dx_mm: 0.8
+  dy_mm: 1.3
   plate_type: 20ml
-  captured: '2026-11-13T17:54:33.483956'
+  captured: '2026-11-18T14:53:37.136144'
   dz_mm_by_type:
-    20ml: 10.4
+    20ml: 8.5
   drpy_deg:
   - -0.15
   - -0.78

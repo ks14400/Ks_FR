@@ -60,6 +60,10 @@ DEFAULT_CONFIG = {
     "bridge_movej_vel_pct": 10,
     "bridge_movej_acc_pct": 15,
     "bridge_gripper_force_pct": 40,
+    # Capture GRIP squeeze: jaws are captured STALLED ON the plate (its
+    # contact width); commanded width must undershoot so the force-limited
+    # close clamps tight (user convention: 118 cmd on a ~122 plate).
+    "grip_capture_squeeze_mm": 4.0,
 }
 
 
@@ -691,14 +695,18 @@ class Handler(BaseHTTPRequestHandler):
                             f"grip capture REFUSED: jaws at {real:.1f}mm real "
                             "look unengaged (fit them on the plate first)"})
                 return
+            squeeze = float(load_config().get(
+                "grip_capture_squeeze_mm", 4.0) or 0.0)
+            stored = round(real - squeeze, 1)
             c = load_calib()
             entry = c.get(body["deck"], {})
             entry.setdefault("grip_mm_by_type", {})[
-                body.get("plate_type", "20ml")] = round(real, 1)
+                body.get("plate_type", "20ml")] = stored
             entry["captured"] = datetime.now().isoformat()
             c[body["deck"]] = entry
             save_calib(c)
             self._json({"ok": True, "grip_mm_real": round(real, 1),
+                        "stored_mm": stored, "squeeze_mm": squeeze,
                         "entry": entry})
         elif p == "/api/calib_save":
             # Ledger editor: merge-save ONE deck entry. Blank/null clears
