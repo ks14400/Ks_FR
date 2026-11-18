@@ -1744,6 +1744,19 @@ def main():
                 _drpy = _c.get("drpy_deg")
                 if _is_src and not args.place_held:
                     sx += _dx; sy += _dy; sz += _dz
+                    # A taught Z is ABSOLUTE: the user put the jaws exactly
+                    # where they belong. The pipeline grasps pick_lift above
+                    # the deck height, but Capture Z does not include it, so
+                    # replay sat pick_lift (~4mm) HIGH at every taught deck
+                    # (user-observed 2026-11-18). Remove it here so taught
+                    # decks grasp at the taught height; auto decks keep it.
+                    if ("dz_mm_by_type" in _c and PLATE_TYPE
+                            in _c["dz_mm_by_type"]) or "dz_mm" in _c:
+                        sz -= args.pick_lift
+                        node.get_logger().warning(
+                            f"taught Z is absolute: pick_lift "
+                            f"{args.pick_lift*1000:+.1f}mm removed from "
+                            "grasp height")
                     if _drpy and any(abs(a) > 0.05 for a in _drpy):
                         _r, _p, _yw = [math.radians(a) for a in _drpy]
                         _cr,_sr,_cp,_sp,_cy,_sy2=(math.cos(_r),math.sin(_r),
