@@ -31,5 +31,17 @@ stand_pos1:
   - 0.39
   - -0.16
   - -0.54
-  grip_mm_by_type:
-    20ml: 122.7
+stand_pos2:
+  dx_mm: 3.3
+  dy_mm: -2.9
+  plate_type: 20ml
+  captured: '2026-11-18T13:47:25.452477'
+  dz_mm_by_type:
+    20ml: 15.8
+stand_pos3:
+  dx_mm: 3.1
+  dy_mm: -1.1
+  plate_type: 20ml
+  captured: '2026-11-18T13:57:15.694140'
+  dz_mm_by_type:
+    20ml: 13.0
