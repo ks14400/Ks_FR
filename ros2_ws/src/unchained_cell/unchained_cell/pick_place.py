@@ -1166,10 +1166,14 @@ def load_taught_calib():
 def taught_offset_deck_frame(node, buf, deck, calib_entry):
     """Convert a taught base_link-frame (dx,dy,dz) mm delta into the deck's
     local frame, for placing the VIRTUAL plate at the taught real position."""
+    # Z uses PLACE dz — the deck's true floor-height error. The PICK dz
+    # also encodes where on the plate the user chose to grip, which must
+    # not move the resting plate (pick/place dz split, 2026-11-17).
     d_base = _np.array([calib_entry.get("dx_mm", 0.0),
                         calib_entry.get("dy_mm", 0.0),
-                        calib_entry.get("dz_mm_by_type", {}).get(
-                            PLATE_TYPE, calib_entry.get("dz_mm", 0.0))]) / 1000.0
+                        calib_entry.get("place_dz_mm_by_type", {}).get(
+                            PLATE_TYPE, calib_entry.get("place_dz_mm", 0.0))
+                        ]) / 1000.0
     R_deck = _quat_to_R(lookup_tf(node, buf, "base_link", deck).transform.rotation)
     return (R_deck.T @ d_base).tolist()
 
@@ -1725,6 +1729,12 @@ def main():
                 _dy = _c.get("dy_mm", 0.0) / 1000.0
                 _dz = _c.get("dz_mm_by_type", {}).get(
                     PLATE_TYPE, _c.get("dz_mm", 0.0)) / 1000.0
+                # PLACE dz: the deck's true pocket-floor error, applied when
+                # this deck is the TARGET. The pick dz must NOT be applied
+                # there — the measured hold already carries grip height, so
+                # it would double-count and release too high (2026-11-17).
+                _pdz = _c.get("place_dz_mm_by_type", {}).get(
+                    PLATE_TYPE, _c.get("place_dz_mm", 0.0)) / 1000.0
                 _drpy = _c.get("drpy_deg")
                 if _is_src and not args.place_held:
                     sx += _dx; sy += _dy; sz += _dz
@@ -1739,7 +1749,7 @@ def main():
                         node.get_logger().warning(
                             f"TAUGHT ANGLES {_name}: rpy={_drpy} deg applied to grasp")
                 elif not _is_src:
-                    tx += _dx; ty += _dy; tz += _dz
+                    tx += _dx; ty += _dy; tz += _pdz
                     if _drpy and any(abs(a) > 0.05 for a in _drpy):
                         _r, _p, _yw = [math.radians(a) for a in _drpy]
                         _cr,_sr,_cp,_sp,_cy,_sy2=(math.cos(_r),math.sin(_r),
@@ -1752,7 +1762,8 @@ def main():
                             f"TAUGHT ANGLES {_name}: rpy={_drpy} deg will apply to place")
                 node.get_logger().warning(
                     f"TAUGHT CALIB {_name}: dx={_dx*1000:+.1f} dy={_dy*1000:+.1f} "
-                    f"dz={_dz*1000:+.1f} mm applied ({'source' if _is_src else 'target'})")
+                    + (f"pick-dz={_dz*1000:+.1f} mm applied (source)" if _is_src
+                       else f"place-dz={_pdz*1000:+.1f} mm applied (target)"))
     node.get_logger().info(f"Source deck in base_link: ({sx:+.3f}, {sy:+.3f}, {sz:+.3f})")
     node.get_logger().info(f"Target deck in base_link: ({tx:+.3f}, {ty:+.3f}, {tz:+.3f})")
 

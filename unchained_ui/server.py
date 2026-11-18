@@ -254,8 +254,10 @@ def pick_grip_mm(cfg, src, plate_type):
     side default. Side = LONG at stand pockets, SHORT elsewhere (vortex/
     instrument nests). Returns None/0 for AUTO."""
     side = "long" if src.startswith("stand_pos") else "short"
-    by_type = cfg.get(f"grip_mm_{side}_by_type") or {}
-    v = by_type.get(plate_type)
+    taught = (load_calib().get(src) or {}).get("grip_mm_by_type") or {}
+    v = taught.get(plate_type)
+    if v in (None, "", 0):
+        v = (cfg.get(f"grip_mm_{side}_by_type") or {}).get(plate_type)
     if v in (None, "", 0):
         v = cfg.get(f"grip_mm_{side}")
     return v or None
@@ -579,6 +581,79 @@ class Handler(BaseHTTPRequestHandler):
                                if "NEST_OK" in out else out[-300:]})
         elif p == "/api/teach/pose":
             self._json(teach_pose(body["deck"], body.get("plate_type", "20ml")))
+        elif p == "/api/teach/capture" and body.get("what") == "grip":
+            # Capture the CURRENT jaw opening (real mm) as this deck+type's
+            # grip width. Arm pose irrelevant — jaws only.
+            g = gripper_state()
+            if not g.get("ok"):
+                self._json({"ok": False, "error":
+                            "no /joint_states — is the scene (and bridge) up?"})
+                return
+            rc, out = sh(
+                "python3 - <<'EOF'\n"
+                "import sys\n"
+                f"sys.path.insert(0, '{REPO}/ros2_ws/src/unchained_cell')\n"
+                "from unchained_cell.pick_place import (joint_to_grip_mm,\n"
+                "    HW_APERTURE_REAL_TO_MODEL)\n"
+                f"m = joint_to_grip_mm({g['joint']})\n"
+                "a, b = HW_APERTURE_REAL_TO_MODEL\n"
+                "print('REAL=%.1f' % ((m - b) / a))\nEOF", timeout=20)
+            mm = re.search(r"REAL=(-?\d+\.\d+)", out)
+            if not mm:
+                self._json({"ok": False,
+                            "error": "grip conversion failed: " + out[-160:]})
+                return
+            real = float(mm.group(1))
+            if not (55 <= real <= 140):
+                self._json({"ok": False, "error":
+                            f"grip capture REFUSED: jaws at {real:.1f}mm real "
+                            "look unengaged (fit them on the plate first)"})
+                return
+            c = load_calib()
+            entry = c.get(body["deck"], {})
+            entry.setdefault("grip_mm_by_type", {})[
+                body.get("plate_type", "20ml")] = round(real, 1)
+            entry["captured"] = datetime.now().isoformat()
+            c[body["deck"]] = entry
+            save_calib(c)
+            self._json({"ok": True, "grip_mm_real": round(real, 1),
+                        "entry": entry})
+        elif p == "/api/calib_save":
+            # Ledger editor: merge-save ONE deck entry. Blank/null clears
+            # a field; per-type dicts merge per key.
+            deck = body.get("deck")
+            if deck not in DECKS:
+                self._json({"ok": False, "error": f"unknown deck {deck}"})
+                return
+            e = body.get("entry") or {}
+            c = load_calib()
+            cur = c.get(deck, {})
+            for k in ("dx_mm", "dy_mm", "place_dz_mm"):
+                if k in e:
+                    if e[k] in (None, ""):
+                        cur.pop(k, None)
+                    else:
+                        cur[k] = float(e[k])
+            if "drpy_deg" in e:
+                if e["drpy_deg"]:
+                    cur["drpy_deg"] = [float(a) for a in e["drpy_deg"]]
+                else:
+                    cur.pop("drpy_deg", None)
+            for k in ("dz_mm_by_type", "place_dz_mm_by_type",
+                      "grip_mm_by_type"):
+                if k in e:
+                    d = cur.setdefault(k, {})
+                    for t, v in (e[k] or {}).items():
+                        if v in (None, ""):
+                            d.pop(t, None)
+                        else:
+                            d[t] = float(v)
+                    if not d:
+                        cur.pop(k, None)
+            cur["edited"] = datetime.now().isoformat()
+            c[deck] = cur
+            save_calib(c)
+            self._json({"ok": True, "entry": cur})
         elif p == "/api/teach/capture":
             tp = teach_pose(body["deck"], body.get("plate_type", "20ml"))
             if not tp.get("ok"):

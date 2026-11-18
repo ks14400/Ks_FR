@@ -140,6 +140,7 @@
       <button onclick="teachCapture('xy')">Capture XY (centered)</button>
       <button onclick="teachCapture('z')">Capture Z (grasp height)</button>
       <button onclick="teachCapture('angles')">Capture ANGLES</button>
+      <button onclick="teachCapture('grip')">Capture GRIP (jaws now)</button>
       <button onclick="teachPose()">Read deltas</button>
     </div>
     <div class="row"><span class="lbl">FREE jaws (teach only)</span>
@@ -156,6 +157,28 @@
       <button onclick="api('/api/teach/drag',{on:false})">4. Drag OFF</button>
       <button onclick="teachLedger()">Show calib ledger</button>
     </div>
+    <h2 style="margin-top:10px">Ledger editor — deck/type selected above</h2>
+    <div class="row">
+      <button onclick="calibLoad()">Load entry</button>
+      <button onclick="calibSave()">Save entry</button>
+      <span class="lbl" style="min-width:0">blank = not set / clears</span>
+    </div>
+    <div class="row"><span class="lbl">deck dx / dy (mm)</span>
+      <input type="number" step="0.1" id="ce_dx" style="width:74px">
+      <input type="number" step="0.1" id="ce_dy" style="width:74px"></div>
+    <div class="row"><span class="lbl">deck tilt r/p/y (deg)</span>
+      <input type="number" step="0.05" id="ce_r" style="width:62px">
+      <input type="number" step="0.05" id="ce_p" style="width:62px">
+      <input type="number" step="0.05" id="ce_y" style="width:62px"></div>
+    <div class="row"><span class="lbl">PICK dz (mm, this type)</span>
+      <input type="number" step="0.1" id="ce_dz" style="width:74px">
+      <span class="lbl" style="min-width:0">grasp height vs model</span></div>
+    <div class="row"><span class="lbl">PLACE dz (mm, this type)</span>
+      <input type="number" step="0.1" id="ce_pdz" style="width:74px">
+      <span class="lbl" style="min-width:0">release height, + = higher</span></div>
+    <div class="row"><span class="lbl">GRIP (real mm, this type)</span>
+      <input type="number" step="0.1" id="ce_grip" style="width:74px">
+      <span class="lbl" style="min-width:0">pick width at this deck</span></div>
     <pre id="teachout" style="display:none"></pre>
   </div>
 
@@ -308,6 +331,28 @@ async function teachCapture(what){
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({deck:$('tdeck').value,plate_type:$('tplate').value,what})});
   tout(await r.json());}
+async function calibLoad(){
+  const r=await fetch('/api/teach/calib',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:'{}'});
+  const c=(await r.json()).calib||{}; const e=c[$('tdeck').value]||{};
+  const t=$('tplate').value, a=e.drpy_deg||['','',''];
+  $('ce_dx').value=e.dx_mm??''; $('ce_dy').value=e.dy_mm??'';
+  $('ce_r').value=a[0]??''; $('ce_p').value=a[1]??''; $('ce_y').value=a[2]??'';
+  $('ce_dz').value=(e.dz_mm_by_type||{})[t]??'';
+  $('ce_pdz').value=(e.place_dz_mm_by_type||{})[t]??'';
+  $('ce_grip').value=(e.grip_mm_by_type||{})[t]??'';
+}
+async function calibSave(){
+  const t=$('tplate').value;
+  const rpy=[$('ce_r').value,$('ce_p').value,$('ce_y').value];
+  const entry={dx_mm:$('ce_dx').value,dy_mm:$('ce_dy').value,
+    drpy_deg:rpy.every(v=>v==='')?null:rpy.map(v=>+v||0),
+    dz_mm_by_type:{[t]:$('ce_dz').value},
+    place_dz_mm_by_type:{[t]:$('ce_pdz').value},
+    grip_mm_by_type:{[t]:$('ce_grip').value}};
+  const r=await api('/api/calib_save',{deck:$('tdeck').value,entry});
+  if(r.entry) tout(r.entry);
+}
 async function teachLedger(){
   const r=await fetch('/api/teach/calib',{method:'POST',
     headers:{'Content-Type':'application/json'},body:'{}'});
@@ -322,7 +367,9 @@ async function init(){
   $('plate').innerHTML=PLATES.map(p=>`<option>${p}</option>`).join('');
   $('tdeck').innerHTML=DECKS.map(d=>`<option>${d}</option>`).join('');
   $('tplate').innerHTML=PLATES.map(p=>`<option>${p}</option>`).join('');
-  renderCfg(); renderGrips(); refresh(); loadRuns();
+  $('tdeck').addEventListener('change',calibLoad);
+  $('tplate').addEventListener('change',calibLoad);
+  renderCfg(); renderGrips(); calibLoad(); refresh(); loadRuns();
   setInterval(refresh,4000);
 }
 init();
