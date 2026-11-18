@@ -313,6 +313,8 @@ def start_run(body, cfg):
         cmd += " --place-held"
     if action == "hover_only":
         cmd += " --hover-only"
+    if action == "place_hover":
+        cmd += " --place-hover-only"
 
     trims = cfg.get("deck_z_trim_mm", {}) or {}
     flags = {}
@@ -541,6 +543,15 @@ class Handler(BaseHTTPRequestHandler):
                                   "target": body["deck"],
                                   "plate_type": body.get("plate_type", "20ml"),
                                   "hardware": True}, cfg))
+        elif p == "/api/teach/place_goto":
+            # PLACE teaching: REAL pick from `source`, carry, stop hovering
+            # above `deck` with the plate held. Then drag to the seat and
+            # Capture PLACE.
+            self._json(start_run({"action": "place_hover",
+                                  "source": body["source"],
+                                  "target": body["deck"],
+                                  "plate_type": body.get("plate_type", "20ml"),
+                                  "hardware": True}, cfg))
         elif p == "/api/teach/drag":
             on = "true" if body.get("on") else "false"
             rc, out = sh("ros2 service call /sdk_executor/drag_teach "
@@ -581,6 +592,77 @@ class Handler(BaseHTTPRequestHandler):
                                if "NEST_OK" in out else out[-300:]})
         elif p == "/api/teach/pose":
             self._json(teach_pose(body["deck"], body.get("plate_type", "20ml")))
+        elif p == "/api/teach/capture" and body.get("what") == "place":
+            # Capture where the HELD plate is right now vs the deck marker.
+            # Teach: place-hover run -> drag the plate to its perfect seat
+            # -> capture. Stores the PLATE-seat offset (base mm), which the
+            # run replays by correcting for the measured lateral hold.
+            deck = body["deck"]; ptype = body.get("plate_type", "20ml")
+            rc, out = sh(
+                "python3 - <<'EOF'\n"
+                "import sys, threading, time\n"
+                f"sys.path.insert(0, '{REPO}/ros2_ws/src/unchained_cell')\n"
+                "import rclpy\n"
+                "from rclpy.node import Node\n"
+                "from rclpy.executors import MultiThreadedExecutor\n"
+                "from tf2_ros import Buffer, TransformListener\n"
+                "from moveit_msgs.srv import GetPlanningScene\n"
+                "from moveit_msgs.msg import PlanningSceneComponents\n"
+                "from unchained_cell import pick_place as pp\n"
+                "import numpy as np\n"
+                "rclpy.init(); n=Node('ui_place_cap')\n"
+                "ex=MultiThreadedExecutor(); ex.add_node(n)\n"
+                "threading.Thread(target=ex.spin, daemon=True).start()\n"
+                "buf=Buffer(); TransformListener(buf, n); time.sleep(2.5)\n"
+                "cli=n.create_client(GetPlanningScene,'/get_planning_scene')\n"
+                "cli.wait_for_service(timeout_sec=5.0)\n"
+                "req=GetPlanningScene.Request()\n"
+                "req.components.components=("
+                "PlanningSceneComponents.ROBOT_STATE_ATTACHED_OBJECTS)\n"
+                "fut=cli.call_async(req); t=time.time()\n"
+                "while not fut.done() and time.time()-t<6: time.sleep(0.05)\n"
+                "acos=fut.result().scene.robot_state.attached_collision_objects\n"
+                "aco=[a for a in acos if a.object.id=='the_plate']\n"
+                "if not aco:\n"
+                "    print('NOPLATE'); rclpy.shutdown(); raise SystemExit\n"
+                "a=aco[0]\n"
+                "Tg=pp._tf_to_T(pp.lookup_tf(n,buf,'base_link',a.link_name))\n"
+                "po=a.object.pose\n"
+                "Tp=np.eye(4); Tp[:3,:3]=pp._quat_to_R(po.orientation)\n"
+                "Tp[:3,3]=[po.position.x,po.position.y,po.position.z]\n"
+                "P=(Tg@Tp)[:3,3]\n"
+                f"m=pp.lookup_tf(n,buf,'base_link','{deck}').transform.translation\n"
+                "print('PL %.2f %.2f %.2f'%((P[0]-m.x)*1000,"
+                "(P[1]-m.y)*1000,(P[2]-m.z)*1000))\n"
+                "rclpy.shutdown()\nEOF", timeout=30)
+            if "NOPLATE" in out:
+                self._json({"ok": False, "error":
+                            "no held plate in the scene — run the place-teach "
+                            "pick first (Pick → hover HERE)"})
+                return
+            mm = re.search(r"PL (-?[\d.]+) (-?[\d.]+) (-?[\d.]+)", out)
+            if not mm:
+                self._json({"ok": False,
+                            "error": "place capture failed: " + out[-200:]})
+                return
+            pdx, pdy, pdz = (float(mm.group(i)) for i in (1, 2, 3))
+            if max(abs(pdx), abs(pdy), abs(pdz)) > 50:
+                self._json({"ok": False, "error":
+                            f"place capture REFUSED: plate is "
+                            f"[{pdx:.1f}, {pdy:.1f}, {pdz:.1f}]mm from "
+                            f"{deck} — wrong deck selected?"})
+                return
+            c = load_calib()
+            entry = c.get(deck, {})
+            entry.setdefault("place_dxy_mm_by_type", {})[ptype] = [
+                round(pdx, 1), round(pdy, 1)]
+            entry.setdefault("place_dz_mm_by_type", {})[ptype] = round(pdz, 1)
+            entry["captured"] = datetime.now().isoformat()
+            c[deck] = entry
+            save_calib(c)
+            self._json({"ok": True, "place_seat_mm":
+                        [round(pdx, 1), round(pdy, 1), round(pdz, 1)],
+                        "entry": entry})
         elif p == "/api/teach/capture" and body.get("what") == "grip":
             # Capture the CURRENT jaw opening (real mm) as this deck+type's
             # grip width. Arm pose irrelevant — jaws only.
@@ -639,6 +721,15 @@ class Handler(BaseHTTPRequestHandler):
                     cur["drpy_deg"] = [float(a) for a in e["drpy_deg"]]
                 else:
                     cur.pop("drpy_deg", None)
+            if "place_dxy_mm_by_type" in e:
+                d = cur.setdefault("place_dxy_mm_by_type", {})
+                for t, v in (e["place_dxy_mm_by_type"] or {}).items():
+                    if not v:
+                        d.pop(t, None)
+                    else:
+                        d[t] = [float(v[0] or 0), float(v[1] or 0)]
+                if not d:
+                    cur.pop("place_dxy_mm_by_type", None)
             for k in ("dz_mm_by_type", "place_dz_mm_by_type",
                       "grip_mm_by_type"):
                 if k in e:

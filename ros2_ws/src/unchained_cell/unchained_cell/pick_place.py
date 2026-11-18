@@ -165,6 +165,7 @@ def rest_float_for(deck_name):
     return REST_FLOAT
 HELD_BOTTOM_BELOW_TCP = None  # measured at rigid attach; used by the place
 HELD_R_PG = None  # measured plate-in-gripper rotation; place orientation is computed from it
+HELD_P_PG = None  # measured plate-in-gripper translation; taught-place lateral targeting uses it
 
 # Gripper limits (URDF): -0.65 closed, 0 open.
 GRIPPER_OPEN = 0.0
@@ -1137,9 +1138,10 @@ def attach_plate_to_gripper(node, scene_client, current_parent, buf=None,
         # deck + THIS + float — targeting the nominal grasp_offset drives
         # the plate pick_lift-deep into the nest floor (the old snap-attach
         # silently hid exactly this).
-        global HELD_BOTTOM_BELOW_TCP, HELD_R_PG
+        global HELD_BOTTOM_BELOW_TCP, HELD_R_PG, HELD_P_PG
         HELD_BOTTOM_BELOW_TCP = float(T_pg[2, 3])
         HELD_R_PG = T_pg[:3, :3].copy()
+        HELD_P_PG = T_pg[:3, 3].copy()
         node.get_logger().info(
             f"   rigid hold: plate bottom {HELD_BOTTOM_BELOW_TCP*1000:.1f}mm "
             f"below TCP (nominal {plate_bottom_below_tcp(PLATE_HEIGHT)*1000:.1f}mm)")
@@ -1484,6 +1486,10 @@ def main():
                         "source-side phases; attaches the plate at the "
                         "NOMINAL hold; --source is ignored (pass any deck). "
                         "Place orientation falls back to DOWN_Q.")
+    p.add_argument("--place-hover-only", action="store_true",
+                   help="Full pick + carry, then STOP hovering above the "
+                        "target with the plate held — PLACE teaching: drag "
+                        "the plate to its seat, then Capture PLACE.")
     p.add_argument("--no-plate", action="store_true",
                    help="Diagnostic: skip spawning the plate entirely. Lets us "
                         "isolate whether the descent failure is caused by the "
@@ -1749,7 +1755,20 @@ def main():
                         node.get_logger().warning(
                             f"TAUGHT ANGLES {_name}: rpy={_drpy} deg applied to grasp")
                 elif not _is_src:
-                    tx += _dx; ty += _dy; tz += _pdz
+                    _pxy = _c.get("place_dxy_mm_by_type", {}).get(PLATE_TYPE)
+                    if _pxy:
+                        # Taught PLACE XY: where the PLATE must seat,
+                        # captured from a real carried plate. Supersedes
+                        # the deck dx/dy; the lateral hold offset is
+                        # corrected at execution time via _place_xy().
+                        tx += _pxy[0] / 1000.0; ty += _pxy[1] / 1000.0
+                        globals()["__place_lateral_fix"] = True
+                        node.get_logger().warning(
+                            f"TAUGHT PLACE XY {_name}: ({_pxy[0]:+.1f}, "
+                            f"{_pxy[1]:+.1f}) mm — plate-seat targeting ON")
+                    else:
+                        tx += _dx; ty += _dy
+                    tz += _pdz
                     if _drpy and any(abs(a) > 0.05 for a in _drpy):
                         _r, _p, _yw = [math.radians(a) for a in _drpy]
                         _cr,_sr,_cp,_sp,_cy,_sy2=(math.cos(_r),math.sin(_r),
@@ -1823,6 +1842,17 @@ def main():
             place_q = DOWN_Q
             node.get_logger().warning("place orientation: fallback DOWN_Q (no measured hold)")
         return place_q
+
+    def _place_xy():
+        # TCP lateral target for the place phases. With a taught PLACE XY,
+        # (tx, ty) is where the PLATE must seat — subtract the measured
+        # lateral hold (plate origin minus TCP, rotated into base at the
+        # place orientation). Without one: legacy centered-hold behavior.
+        if (globals().get("__place_lateral_fix") and HELD_P_PG is not None
+                and HELD_R_PG is not None):
+            _off = (_R_tgt @ HELD_R_PG.T) @ HELD_P_PG
+            return tx - float(_off[0]), ty - float(_off[1])
+        return tx, ty
 
 
     def _is_instrument_deck(d):
@@ -1981,7 +2011,7 @@ def main():
                       lambda: plan_arm_to_pose_via_ik(
                           node, mg, ik_client, get_scene_client,
                           "base_link", "gripper_grasp_link",
-                          tx, ty, tz + args.hover,
+                          *_place_xy(), tz + args.hover,
                           _resolve_place_q(), vel=args.vel,
                           planning_time=args.transit_time,
                           planner_id=args.planner,
@@ -1999,6 +2029,15 @@ def main():
                       budget=f"≤{MAX_TRAVEL_PER_OMPL_PHASE:.1f}rad total, "
                              f"≤{MAX_SINGLE_JOINT_TRAVEL:.1f}rad per joint"):
         fail("transit failed")
+
+    if args.place_hover_only:
+        node.get_logger().warning(
+            "--place-hover-only: holding the plate above the target. "
+            "Drag ON, seat the plate by hand (jaws stay closed), then "
+            "Capture PLACE from the Teach panel.")
+        _print_summary(node, phases)
+        node.get_logger().info("DONE (place-hover-only)")
+        _clean_exit(0)
 
     # The descend target must put the PLATE BOTTOM at deck + per-deck float
     # using the MEASURED hold from the rigid attach (the plate hangs
@@ -2030,7 +2069,7 @@ def main():
                       lambda: cartesian_move(
                           node, cart_client, exec_client,
                           "base_link", "gripper_grasp_link",
-                          tx, ty, tz + place_hang + place_float,
+                          *_place_xy(), tz + place_hang + place_float,
                           _resolve_place_q(), vel=args.vel, max_step=0.005),
                       from_z=f"{tz+args.hover:+.3f}",
                       to_z=f"{tz+args.grasp_offset:+.3f}",
@@ -2044,7 +2083,7 @@ def main():
                       lambda: cartesian_move(
                           node, cart_client, exec_client,
                           "base_link", "gripper_grasp_link",
-                          tx, ty, tz + place_hang + place_float + args.pre_release_lift,
+                          *_place_xy(), tz + place_hang + place_float + args.pre_release_lift,
                           _resolve_place_q(), vel=args.vel, max_step=0.005),
                       from_z=f"{tz+args.grasp_offset:+.3f}",
                       to_z=f"{tz+args.grasp_offset+args.pre_release_lift:+.3f}",
@@ -2083,7 +2122,7 @@ def main():
                       lambda: cartesian_move(
                           node, cart_client, exec_client,
                           "base_link", "gripper_grasp_link",
-                          tx, ty, tz + args.hover,
+                          *_place_xy(), tz + args.hover,
                           _resolve_place_q(), vel=args.vel, max_step=0.005),
                       from_z=f"{tz+args.grasp_offset:+.3f}",
                       to_z=f"{tz+args.hover:+.3f}",

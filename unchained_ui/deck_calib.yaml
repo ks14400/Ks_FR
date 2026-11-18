@@ -20,3 +20,22 @@ stand_pos4:
   place_dz_mm_by_type:
     20ml: 0.0
   edited: '2026-11-17T17:27:48.915364'
+stand_pos1:
+  dx_mm: 5.7
+  dy_mm: -3.1
+  plate_type: 20ml
+  captured: '2026-11-17T18:07:17.656947'
+  dz_mm_by_type:
+    20ml: 14.2
+  drpy_deg:
+  - 0.39
+  - -0.16
+  - -0.54
+  grip_mm_by_type:
+    20ml: 122.7
+  place_dxy_mm_by_type:
+    20ml:
+    - 0.0
+    - -0.0
+  place_dz_mm_by_type:
+    20ml: 0.5
