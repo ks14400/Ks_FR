@@ -1171,8 +1171,10 @@ def taught_offset_deck_frame(node, buf, deck, calib_entry):
     # Z uses PLACE dz — the deck's true floor-height error. The PICK dz
     # also encodes where on the plate the user chose to grip, which must
     # not move the resting plate (pick/place dz split, 2026-11-17).
-    d_base = _np.array([calib_entry.get("dx_mm", 0.0),
-                        calib_entry.get("dy_mm", 0.0),
+    _xy = calib_entry.get("dxy_mm_by_type", {}).get(
+        PLATE_TYPE) or [calib_entry.get("dx_mm", 0.0),
+                        calib_entry.get("dy_mm", 0.0)]
+    d_base = _np.array([_xy[0], _xy[1],
                         calib_entry.get("place_dz_mm_by_type", {}).get(
                             PLATE_TYPE, calib_entry.get("place_dz_mm", 0.0))
                         ]) / 1000.0
@@ -1731,8 +1733,14 @@ def main():
                 _c = _calib.get(_name)
                 if not _c:
                     continue
-                _dx = _c.get("dx_mm", 0.0) / 1000.0
-                _dy = _c.get("dy_mm", 0.0) / 1000.0
+                _xy_t = _c.get("dxy_mm_by_type", {}).get(PLATE_TYPE)
+                if _xy_t:
+                    # per-type XY: plates seat slightly differently in the
+                    # same pocket. Deck dx/dy = untaught-type fallback.
+                    _dx = _xy_t[0] / 1000.0; _dy = _xy_t[1] / 1000.0
+                else:
+                    _dx = _c.get("dx_mm", 0.0) / 1000.0
+                    _dy = _c.get("dy_mm", 0.0) / 1000.0
                 _dz = _c.get("dz_mm_by_type", {}).get(
                     PLATE_TYPE, _c.get("dz_mm", 0.0)) / 1000.0
                 # PLACE dz: the deck's true pocket-floor error, applied when

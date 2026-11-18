@@ -729,15 +729,16 @@ class Handler(BaseHTTPRequestHandler):
                     cur["drpy_deg"] = [float(a) for a in e["drpy_deg"]]
                 else:
                     cur.pop("drpy_deg", None)
-            if "place_dxy_mm_by_type" in e:
-                d = cur.setdefault("place_dxy_mm_by_type", {})
-                for t, v in (e["place_dxy_mm_by_type"] or {}).items():
-                    if not v:
-                        d.pop(t, None)
-                    else:
-                        d[t] = [float(v[0] or 0), float(v[1] or 0)]
-                if not d:
-                    cur.pop("place_dxy_mm_by_type", None)
+            for k in ("dxy_mm_by_type", "place_dxy_mm_by_type"):
+                if k in e:
+                    d = cur.setdefault(k, {})
+                    for t, v in (e[k] or {}).items():
+                        if not v:
+                            d.pop(t, None)
+                        else:
+                            d[t] = [float(v[0] or 0), float(v[1] or 0)]
+                    if not d:
+                        cur.pop(k, None)
             for k in ("dz_mm_by_type", "place_dz_mm_by_type",
                       "grip_mm_by_type"):
                 if k in e:
@@ -769,6 +770,12 @@ class Handler(BaseHTTPRequestHandler):
             c = load_calib()
             entry = c.get(body["deck"], {})
             if body.get("what") == "xy":
+                # per-type XY (plates seat slightly differently in the same
+                # pocket); deck-level dx/dy doubles as the fallback starting
+                # point for types not yet taught here.
+                entry.setdefault("dxy_mm_by_type", {})[
+                    body.get("plate_type", "20ml")] = [
+                        tp["dx_mm"], tp["dy_mm"]]
                 entry["dx_mm"], entry["dy_mm"] = tp["dx_mm"], tp["dy_mm"]
             elif body.get("what") == "angles":
                 if max(abs(a) for a in tp["drpy_deg"]) > 15:
