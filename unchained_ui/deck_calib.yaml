@@ -33,9 +33,3 @@ stand_pos1:
   - -0.54
   grip_mm_by_type:
     20ml: 122.7
-  place_dxy_mm_by_type:
-    20ml:
-    - 0.0
-    - -0.0
-  place_dz_mm_by_type:
-    20ml: 0.5
