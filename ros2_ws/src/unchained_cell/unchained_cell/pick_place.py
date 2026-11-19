@@ -903,15 +903,25 @@ def spawn_obstacle_plates(node, scene_client, deck_names):
     """
     if not deck_names:
         return True
-    for i, deck in enumerate(deck_names):
+    for i, spec in enumerate(deck_names):
+        # spec = "deck" (obstacle is the run's own plate type) or
+        # "deck:type" (e.g. deck_9_10_pos1:8ml — a DIFFERENT rack parked
+        # there; real collision observed with the carried plate 2026-11-19).
+        deck, _, _ptype = spec.partition(":")
+        _mesh_file = None
+        if _ptype:
+            if _ptype not in PLATE_TYPES:
+                raise ValueError(f"unknown obstacle plate type '{_ptype}' "
+                                 f"in --also-spawn-at '{spec}'")
+            _mesh_file = PLATE_TYPES[_ptype]["mesh"]
         obstacle_id = f"obstacle_plate_at_{deck}"
         co = CollisionObject()
         co.header.frame_id = deck
         co.id = obstacle_id
         # Type-parameterized rack MESH (same loader/type as the carried
-        # plate). Mesh origin = bottom center, deck frames are Y-up; float
-        # by the per-deck rest float like the live plate.
-        co.meshes.append(_load_plate_mesh())
+        # plate unless the spec names one). Mesh origin = bottom center,
+        # deck frames are Y-up; float by the per-deck rest float.
+        co.meshes.append(_load_plate_mesh(_mesh_file))
         p = Pose()
         p.position.y = rest_float_for(deck)
         p.orientation = Quaternion(w=1.0)

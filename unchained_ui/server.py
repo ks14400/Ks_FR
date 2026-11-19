@@ -68,6 +68,10 @@ DEFAULT_CONFIG = {
     # this many mm ABOVE the true seat (safer than full seating); the
     # capture subtracts it so the stored value IS the seat.
     "place_capture_above_mm": 4.0,
+    # Racks physically parked on other decks ("deck:type, deck:type") —
+    # spawned as planning obstacles on HARDWARE runs so carried plates
+    # route around them (carried-plate vs 9-10 rack collision, 2026-11-19).
+    "occupied_decks": "",
 }
 
 
@@ -348,6 +352,13 @@ def start_run(body, cfg):
         flags["pick_lift"] = cfg["pick_lift_m"]
     if body.get("extra_flags"):
         cmd += " " + body["extra_flags"]
+    occ = (cfg.get("occupied_decks") or "").strip()
+    if occ and hardware and "--also-spawn-at" not in cmd:
+        specs = [x.strip() for x in occ.split(",")
+                 if x.strip() and x.strip().split(":")[0] not in (src, tgt)]
+        if specs:
+            cmd += " --also-spawn-at " + ",".join(specs)
+            flags["occupied_decks"] = specs
 
     run_id = (datetime.now().strftime("%Y-%m-%d_%H%M%S") +
               f"_{action}_{src}_to_{tgt}_{plate}" +

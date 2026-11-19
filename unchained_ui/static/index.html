@@ -103,6 +103,9 @@
   <div class="card">
     <h2>Parameters <span style="float:right"><button onclick="saveCfg()">Save</button></span></h2>
     <div id="params"></div>
+    <div class="row"><span class="lbl">occupied decks</span>
+      <input id="occ" style="flex:1" placeholder="deck_9_10_pos1:8ml, ..."
+        title="racks parked on other decks — spawned as obstacles on hardware runs"></div>
     <h2 style="margin-top:10px">Per-type grip widths (REAL mm, hardware; blank = side default)</h2>
     <div id="gripgrid"></div>
     <h2 style="margin-top:10px">Deck Z-trims (mm)</h2>
@@ -272,6 +275,7 @@ function renderCfg(){
   $('params').innerHTML=PARAM_DEFS.map(([k,l])=>
     `<div class="row"><span class="lbl">${l}</span>
      <input type="number" step="any" id="cfg_${k}" value="${CFG[k]??''}"></div>`).join('');
+  $('occ').value=CFG.occupied_decks||'';
   const tr=CFG.deck_z_trim_mm||{};
   $('trims').innerHTML=DECKS.filter(d=>!d.startsWith('stand_pos')&&d!=='table_top')
     .map(d=>`<div class="row"><span class="lbl">${d}</span>
@@ -281,6 +285,7 @@ function renderCfg(){
 
 function collectCfg(){
   PARAM_DEFS.forEach(([k])=>{const v=$('cfg_'+k).value; CFG[k]=v===''?null:+v;});
+  CFG.occupied_decks=$('occ').value.trim();
   collectGrips();
   const tr={};
   DECKS.filter(d=>!d.startsWith('stand_pos')&&d!=='table_top').forEach(d=>{

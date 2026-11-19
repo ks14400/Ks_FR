@@ -18,3 +18,4 @@ bridge_movej_acc_pct: 60
 bridge_gripper_force_pct: 40
 grip_capture_squeeze_mm: 4
 place_capture_above_mm: 4.0
+occupied_decks: deck_9_10_pos1:8ml
