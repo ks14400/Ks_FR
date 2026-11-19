@@ -64,6 +64,10 @@ DEFAULT_CONFIG = {
     # contact width); commanded width must undershoot so the force-limited
     # close clamps tight (user convention: 118 cmd on a ~122 plate).
     "grip_capture_squeeze_mm": 4.0,
+    # Capture PLACE hover: the user teaches the place holding the plate
+    # this many mm ABOVE the true seat (safer than full seating); the
+    # capture subtracts it so the stored value IS the seat.
+    "place_capture_above_mm": 4.0,
 }
 
 
@@ -650,6 +654,9 @@ class Handler(BaseHTTPRequestHandler):
                             "error": "place capture failed: " + out[-200:]})
                 return
             pdx, pdy, pdz = (float(mm.group(i)) for i in (1, 2, 3))
+            above = float(load_config().get(
+                "place_capture_above_mm", 0.0) or 0.0)
+            pdz -= above
             if max(abs(pdx), abs(pdy), abs(pdz)) > 50:
                 self._json({"ok": False, "error":
                             f"place capture REFUSED: plate is "
@@ -666,7 +673,7 @@ class Handler(BaseHTTPRequestHandler):
             save_calib(c)
             self._json({"ok": True, "place_seat_mm":
                         [round(pdx, 1), round(pdy, 1), round(pdz, 1)],
-                        "entry": entry})
+                        "captured_above_mm": above, "entry": entry})
         elif p == "/api/teach/capture" and body.get("what") == "grip":
             # Capture the CURRENT jaw opening (real mm) as this deck+type's
             # grip width. Arm pose irrelevant — jaws only.
