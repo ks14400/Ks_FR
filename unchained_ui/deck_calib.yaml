@@ -24,6 +24,20 @@ deck_vortex_pos1:
     - -15.4
     - -18.1
   plate_type: '96'
+  place_by_source:
+    stand_pos1:
+      20ml:
+      - -9.5
+      - -15.2
+      - -3.6
+      '96':
+      - -11.8
+      - -12.9
+      - -5.3
+      8ml:
+      - -10.5
+      - -13.2
+      - -4.1
 stand_pos4:
   dx_mm: 0.5
   dy_mm: -0.1
