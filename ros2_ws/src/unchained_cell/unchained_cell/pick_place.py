@@ -2100,7 +2100,16 @@ def main():
     # ============================================================
     # PHASE: pre-release lift  (Cartesian — clears fingertips from the surface)
     # ============================================================
-    if not _run_phase(node, phases, "pre-release lift", "Cartesian",
+    # At instrument nests on hardware the plate hangs at the float height —
+    # it never rests, so the pre-release lift unloads nothing and only adds
+    # drop height (10mm total felt too hard, 2026-11-18). Release right at
+    # the float: 5mm above the nest floor. Stand/table keep the lift (fins).
+    _skip_prelift = args.hardware and _is_instrument_deck(args.target)
+    if _skip_prelift:
+        node.get_logger().info(
+            "   nest release: pre-release lift SKIPPED — release at "
+            f"float height ({place_float*1000:.0f}mm above nest floor)")
+    if not _skip_prelift and not _run_phase(node, phases, "pre-release lift", "Cartesian",
                       lambda: cartesian_move(
                           node, cart_client, exec_client,
                           "base_link", "gripper_grasp_link",
