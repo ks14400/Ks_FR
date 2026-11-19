@@ -761,7 +761,8 @@ def plan_arm_to_pose_via_ik(node, mg, ik_cli, scene_client,
                             planner_id="RRTstar",
                             exec_client=None,
                             keep_orientation_along_path=False,
-                            path_tilt_tol=0.3):
+                            path_tilt_tol=0.3,
+                            prerotate_wrist=False):
     """Plan to a pose by FIRST searching multiple IK seeds for the joint
     config closest to current, THEN planning a joint-space goal to it.
     OMPL is given a deterministic goal that's by construction close to
@@ -777,6 +778,37 @@ def plan_arm_to_pose_via_ik(node, mg, ik_cli, scene_client,
         node, ik_cli, base, link, x, y, z, q, current_state, group=group)
     if target_joints is None:
         return False, "IK failed (no collision-free solution at the requested pose)"
+    if prerotate_wrist and exec_client is not None:
+        # Place-branch fix (2026-11-19): the place orientation at the vortex
+        # sits a half-turn of j6 from the pick family. A transit goal with
+        # |dj6| ~ pi under the plate-flat constraint is near-unplannable
+        # (observed: 7.6-27 rad detours, all budget-rejected). But with the
+        # gripper pointing DOWN, a pure j6 move is a yaw spin that keeps the
+        # plate flat by construction - so spin the wrist IN PLACE first,
+        # then the remaining transit is a short ordinary hop. A1 stays A1:
+        # this reaches the exact taught orientation, no plate flip.
+        _cur = {}
+        for _n, _p in zip(current_state.joint_state.name,
+                          current_state.joint_state.position):
+            _cur[_n] = _p
+        _d6 = abs(target_joints.get("j6", 0.0) - _cur.get("j6", 0.0))
+        if _d6 > 1.5:
+            _pre = {k: _cur.get(k, v) for k, v in target_joints.items()}
+            _pre["j6"] = target_joints["j6"]
+            node.get_logger().info(
+                f"   wrist pre-rotation: spinning j6 in place by "
+                f"{_d6:+.2f} rad (plate stays flat) before the transit")
+            _ok, _info = plan_arm_to_joints(
+                node, mg, _pre, vel=vel, planning_time=5.0,
+                planning_attempts=10, planner_id=planner_id,
+                exec_client=exec_client,
+                keep_orientation_along_path=keep_orientation_along_path,
+                orient_q=q, base_frame=base, link=link,
+                path_tilt_tol=path_tilt_tol)
+            if not _ok:
+                node.get_logger().warning(
+                    f"   wrist pre-rotation failed ({_info}) - "
+                    "falling back to direct transit planning")
     return plan_arm_to_joints(node, mg, target_joints, vel=vel,
                               planning_time=planning_time,
                               planning_attempts=planning_attempts,
@@ -2057,6 +2089,7 @@ def main():
                           "base_link", "gripper_grasp_link",
                           *_place_xy(), tz + args.hover,
                           _resolve_place_q(), vel=args.vel,
+                          prerotate_wrist=True,
                           planning_time=args.transit_time,
                           planner_id=args.planner,
                           planning_attempts=args.num_attempts,

@@ -4,20 +4,20 @@ deck_vortex_pos1:
   dz_mm_by_type:
     20ml: 19.2
     8ml: 5.1
-  captured: '2026-11-19T15:20:37.778928'
+  captured: '2026-11-19T15:45:41.113200'
   place_dxy_mm_by_type:
     20ml:
     - -17.3
     - -18.0
     '96':
-    - -15.2
-    - -16.8
+    - -16.7
+    - -18.9
     8ml:
     - -13.8
     - -17.3
   place_dz_mm_by_type:
     20ml: -2.3
-    '96': -3.0
+    '96': -1.1
     8ml: -5.0
   dxy_mm_by_type:
     '96':
@@ -69,6 +69,10 @@ deck_vortex_pos1:
       - -17.3
       - -18.0
       - -2.3
+      '96':
+      - -16.7
+      - -18.9
+      - -1.1
 stand_pos4:
   dx_mm: 0.5
   dy_mm: -0.1
