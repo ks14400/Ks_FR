@@ -1776,7 +1776,20 @@ def main():
                         node.get_logger().warning(
                             f"TAUGHT ANGLES {_name}: rpy={_drpy} deg applied to grasp")
                 elif not _is_src:
-                    _pxy = _c.get("place_dxy_mm_by_type", {}).get(PLATE_TYPE)
+                    # Per-SOURCE place (each pocket's grasp settles the
+                    # plate slightly differently): exact route first, then
+                    # the generic per-type place as fallback.
+                    _psrc = _c.get("place_by_source", {}).get(
+                        args.source, {}).get(PLATE_TYPE)
+                    if _psrc:
+                        _pxy = list(_psrc[:2])
+                        _pdz = _psrc[2] / 1000.0
+                        node.get_logger().warning(
+                            f"TAUGHT PLACE (route {args.source} -> {_name}) "
+                            f"xy=({_psrc[0]:+.1f}, {_psrc[1]:+.1f}) "
+                            f"dz={_psrc[2]:+.1f} mm")
+                    else:
+                        _pxy = _c.get("place_dxy_mm_by_type", {}).get(PLATE_TYPE)
                     if _pxy:
                         # Taught PLACE XY: where the PLATE must seat,
                         # captured from a real carried plate. Supersedes

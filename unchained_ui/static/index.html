@@ -349,7 +349,8 @@ async function teachPose(){
 async function teachCapture(what){
   const r=await fetch('/api/teach/capture',{method:'POST',
     headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({deck:$('tdeck').value,plate_type:$('tplate').value,what})});
+    body:JSON.stringify({deck:$('tdeck').value,plate_type:$('tplate').value,
+      source:$('tsrc').value,what})});
   tout(await r.json());}
 async function calibLoad(){
   const r=await fetch('/api/teach/calib',{method:'POST',

@@ -665,14 +665,21 @@ class Handler(BaseHTTPRequestHandler):
                 return
             c = load_calib()
             entry = c.get(deck, {})
-            entry.setdefault("place_dxy_mm_by_type", {})[ptype] = [
-                round(pdx, 1), round(pdy, 1)]
-            entry.setdefault("place_dz_mm_by_type", {})[ptype] = round(pdz, 1)
+            vals = [round(pdx, 1), round(pdy, 1), round(pdz, 1)]
+            # per-source route entry (each pocket's grasp settles the plate
+            # a little differently) + refresh the generic per-type fallback
+            # used for routes not yet taught.
+            psrc = body.get("source")
+            if psrc:
+                entry.setdefault("place_by_source", {}).setdefault(
+                    psrc, {})[ptype] = vals
+            entry.setdefault("place_dxy_mm_by_type", {})[ptype] = vals[:2]
+            entry.setdefault("place_dz_mm_by_type", {})[ptype] = vals[2]
             entry["captured"] = datetime.now().isoformat()
             c[deck] = entry
             save_calib(c)
-            self._json({"ok": True, "place_seat_mm":
-                        [round(pdx, 1), round(pdy, 1), round(pdz, 1)],
+            self._json({"ok": True, "place_seat_mm": vals,
+                        "route": (f"{psrc} -> {deck}" if psrc else "generic"),
                         "captured_above_mm": above, "entry": entry})
         elif p == "/api/teach/capture" and body.get("what") == "grip":
             # Capture the CURRENT jaw opening (real mm) as this deck+type's
