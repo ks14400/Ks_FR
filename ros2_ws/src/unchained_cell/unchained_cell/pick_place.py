@@ -707,7 +707,8 @@ def compute_ik(node, ik_cli, base_frame, link_name, x, y, z, q,
 
 
 def compute_ik_best_of_many(node, ik_cli, base, link, x, y, z, q,
-                            current_state, group="fairino16_v6_group"):
+                            current_state, group="fairino16_v6_group",
+                            prefer_same_wrist=False):
     """Try MULTIPLE IK seeds (perturbed around current state) and return the
     joint config with smallest distance from current. KDL IK is iterative
     and converges to whichever local solution is nearest the seed — so by
@@ -730,6 +731,20 @@ def compute_ik_best_of_many(node, ik_cli, base, link, x, y, z, q,
             if n == "j1":
                 s.joint_state.position[i] = cur_j1 + off
         seed_configs.append((f"j1{off:+.1f}", s))
+    if prefer_same_wrist:
+        # Carried-plate transits: the place yaw sits ~90-180deg of TOOL yaw
+        # away. KDL can express that as a j6 turn (flat, safe — the
+        # pre-rotation handles it) or as a j5 family flip (plate tilts
+        # sideways mid-path — near-unplannable under the flat constraint,
+        # observed 2026-11-19). Seed j6 directly at the likely turns so the
+        # same-family solution exists in the candidate set.
+        cur_j6 = cur.get("j6", 0.0)
+        for off6 in (+1.57, -1.57, +2.9, -2.9):
+            s = copy.deepcopy(current_state)
+            for i, n in enumerate(s.joint_state.name):
+                if n == "j6":
+                    s.joint_state.position[i] = cur_j6 + off6
+            seed_configs.append((f"j6{off6:+.1f}", s))
 
     best = None
     best_travel = float("inf")
@@ -744,13 +759,26 @@ def compute_ik_best_of_many(node, ik_cli, base, link, x, y, z, q,
             continue
         n_ok += 1
         travel = sum(abs(result[k] - cur.get(k, 0.0)) for k in result)
-        if travel < best_travel:
-            best_travel = travel
+        score = travel
+        if prefer_same_wrist:
+            # A j5 family flip makes the flat-constrained path contorted or
+            # impossible — penalize it so the j6-turn solution wins whenever
+            # one exists (raw travel between the two is nearly tied).
+            score += 4.0 * abs(result.get("j5", 0.0) - cur.get("j5", 0.0))
+        if score < best_travel:
+            best_travel = score
             best = result
             best_name = name
-    node.get_logger().info(
-        f"   IK seed search: {n_ok}/{n_tried} valid → best seed '{best_name}' "
-        f"with Δjoints = {best_travel:.2f} rad")
+    if best is not None:
+        _wd = {k: best[k] - cur.get(k, 0.0) for k in ("j4", "j5", "j6")
+               if k in best}
+        node.get_logger().info(
+            f"   IK seed search: {n_ok}/{n_tried} valid → best seed "
+            f"'{best_name}' score {best_travel:.2f} | wrist Δ "
+            + ", ".join(f"{k}={v:+.2f}" for k, v in _wd.items()))
+    else:
+        node.get_logger().info(
+            f"   IK seed search: {n_ok}/{n_tried} valid → none usable")
     return best, best_travel
 
 
@@ -775,7 +803,8 @@ def plan_arm_to_pose_via_ik(node, mg, ik_cli, scene_client,
     if current_state is None:
         return False, "could not fetch current robot state"
     target_joints, ik_delta = compute_ik_best_of_many(
-        node, ik_cli, base, link, x, y, z, q, current_state, group=group)
+        node, ik_cli, base, link, x, y, z, q, current_state, group=group,
+        prefer_same_wrist=prerotate_wrist)
     if target_joints is None:
         return False, "IK failed (no collision-free solution at the requested pose)"
     if prerotate_wrist and exec_client is not None:
