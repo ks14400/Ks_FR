@@ -2108,37 +2108,57 @@ def main():
         _clean_exit(0)
 
     # ============================================================
-    # PHASE: align wrist at home to the PLACE orientation (option 2,
-    # 2026-11-19). The stand->vortex place orientation sits ~a tool-yaw
-    # half-turn from the pick family; doing that turn mid-transit squeezed
-    # the flat corridor at the instrument (8ml with its 15mm-deeper hold:
-    # unplannable, 10+ attempts). Reorient HERE at home instead — open
-    # space, full clearance — so the transit leaves with the wrist already
-    # in the place family and becomes a short hop. For easy directions
-    # (place yaw ~ current yaw) this plans as a near-no-op.
+    # PHASE: align wrist at home — PURE j6 yaw spin (option 2, take 2).
+    # Lesson from 2026-11-19 runs: a wrist FAMILY flip (j4/j5 half-turns)
+    # is near-unplannable under the flat constraint anywhere, and at a
+    # fixed TCP it is geometrically dead. But the place yaw is only a
+    # ~1.3 rad j6 turn away in the SAME family — so ask IK (with j6 seeds)
+    # for the same-family solution at the home TCP, and if it exists,
+    # spin ONLY j6 to it: a flat yaw spin that plans trivially. The
+    # transit then leaves in the place wrist family and is an ordinary
+    # via-home-sized hop. No same-family solution -> skip (transit
+    # retries with escalation handle it, as before).
     # ============================================================
     _tf_home = lookup_tf(node, buf, "base_link", "gripper_grasp_link")
-    if not _run_phase(node, phases, "align wrist at home (place orientation)",
-                      "OMPL+IK",
-                      lambda: plan_arm_to_pose_via_ik(
-                          node, mg, ik_client, get_scene_client,
-                          "base_link", "gripper_grasp_link",
-                          _tf_home.transform.translation.x,
-                          _tf_home.transform.translation.y,
-                          _tf_home.transform.translation.z,
-                          _resolve_place_q(), vel=args.vel,
-                          planning_time=args.transit_time,
-                          planner_id=args.planner,
-                          planning_attempts=args.num_attempts,
-                          exec_client=exec_client,
-                          keep_orientation_along_path=args.keep_plate_flat,
-                          path_tilt_tol=args.path_tilt_tol),
-                      target="place orientation at the current (home) TCP position",
-                      tilt_limit=(f"±{args.path_tilt_tol:.3f} rad along path"
-                                  if args.keep_plate_flat else "OFF"),
-                      note="wrist family flip in open space; transit then "
-                           "needs no mid-corridor yaw turn"):
-        fail("wrist align at home failed")
+    _cur_state = get_current_robot_state(node, get_scene_client)
+    _cur_j = {n: p for n, p in zip(_cur_state.joint_state.name,
+                                   _cur_state.joint_state.position)}
+    _sol, _ = compute_ik_best_of_many(
+        node, ik_client, "base_link", "gripper_grasp_link",
+        _tf_home.transform.translation.x,
+        _tf_home.transform.translation.y,
+        _tf_home.transform.translation.z,
+        _resolve_place_q(), _cur_state, prefer_same_wrist=True)
+    _dj = ({k: _sol[k] - _cur_j.get(k, 0.0) for k in _sol} if _sol else {})
+    if (_sol and abs(_dj.get("j4", 9.0)) < 0.3
+            and abs(_dj.get("j5", 9.0)) < 0.3
+            and abs(_dj.get("j6", 0.0)) > 0.3):
+        _stage = {k: _cur_j.get(k, _sol[k]) for k in _sol}
+        _stage["j6"] = _sol["j6"]
+        if not _run_phase(node, phases,
+                          "align wrist at home (pure j6 yaw spin)", "OMPL",
+                          lambda: plan_arm_to_joints(
+                              node, mg, _stage, vel=args.vel,
+                              planning_time=args.planning_time,
+                              planning_attempts=args.num_attempts,
+                              planner_id=args.planner,
+                              exec_client=exec_client,
+                              keep_orientation_along_path=args.keep_plate_flat,
+                              orient_q=_resolve_place_q(),
+                              base_frame="base_link",
+                              link="gripper_grasp_link",
+                              path_tilt_tol=args.path_tilt_tol),
+                          target=(f"j6 {_cur_j.get('j6', 0.0):+.2f} -> "
+                                  f"{_sol['j6']:+.2f} rad, other joints held"),
+                          note="flat yaw spin in place; transit leaves in "
+                               "the place wrist family"):
+            fail("wrist align at home failed")
+    else:
+        node.get_logger().info(
+            "   align wrist: no same-family j6-turn at home (wrist Δ "
+            + ", ".join(f"{k}={_dj.get(k, 0.0):+.2f}"
+                        for k in ("j4", "j5", "j6"))
+            + ") — skipping; transit handles orientation with retries")
 
     # ============================================================
     # PHASE: transit above target  (OMPL — now from home, much shorter swing)
