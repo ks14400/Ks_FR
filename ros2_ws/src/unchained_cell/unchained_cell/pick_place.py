@@ -759,12 +759,13 @@ def compute_ik_best_of_many(node, ik_cli, base, link, x, y, z, q,
             continue
         n_ok += 1
         travel = sum(abs(result[k] - cur.get(k, 0.0)) for k in result)
+        # NOTE 2026-11-19: a same-wrist-family (j6-turn) penalty was tried
+        # here and REVERTED — at the vortex the j6-turn goal proved
+        # UNplannable under the flat constraint (-2 on every attempt),
+        # while the j5-flip family is the one RRTstar actually threads
+        # (96 + 20ml hardware runs). Raw travel picks correctly; the extra
+        # j6 seeds stay (more candidates, free) and wrist deltas are logged.
         score = travel
-        if prefer_same_wrist:
-            # A j5 family flip makes the flat-constrained path contorted or
-            # impossible — penalize it so the j6-turn solution wins whenever
-            # one exists (raw travel between the two is nearly tied).
-            score += 4.0 * abs(result.get("j5", 0.0) - cur.get("j5", 0.0))
         if score < best_travel:
             best_travel = score
             best = result
@@ -2112,19 +2113,34 @@ def main():
     # above has already moved the arm into a neutral config, so this
     # transit is a short joint-space hop, not a workspace-spanning swing.
     # ============================================================
+    _transit_try = {"n": 0}
+
+    def _transit_attempt():
+        # Escalate planning time across retries (15 -> 24 -> 33 -> 42 -> 45s
+        # at the default 15): the flat-constrained vortex transit is hard —
+        # the known-good path was found within 15s once, so more time per
+        # retry beats re-rolling the same 15s dice (2026-11-19).
+        _transit_try["n"] += 1
+        _t = min(args.transit_time * (1 + 0.6 * (_transit_try["n"] - 1)),
+                 args.transit_time * 3)
+        if _transit_try["n"] > 1:
+            node.get_logger().info(
+                f"   retry {_transit_try['n']}: planning time -> {_t:.0f}s")
+        return plan_arm_to_pose_via_ik(
+            node, mg, ik_client, get_scene_client,
+            "base_link", "gripper_grasp_link",
+            *_place_xy(), tz + args.hover,
+            _resolve_place_q(), vel=args.vel,
+            prerotate_wrist=True,
+            planning_time=_t,
+            planner_id=args.planner,
+            planning_attempts=args.num_attempts,
+            exec_client=exec_client,
+            keep_orientation_along_path=args.keep_plate_flat,
+            path_tilt_tol=args.path_tilt_tol)
+
     if not _run_phase(node, phases, f"transit above {args.target}", "OMPL+IK",
-                      lambda: plan_arm_to_pose_via_ik(
-                          node, mg, ik_client, get_scene_client,
-                          "base_link", "gripper_grasp_link",
-                          *_place_xy(), tz + args.hover,
-                          _resolve_place_q(), vel=args.vel,
-                          prerotate_wrist=True,
-                          planning_time=args.transit_time,
-                          planner_id=args.planner,
-                          planning_attempts=args.num_attempts,
-                          exec_client=exec_client,
-                          keep_orientation_along_path=args.keep_plate_flat,
-                          path_tilt_tol=args.path_tilt_tol),
+                      _transit_attempt,
                       target=f"({tx:+.3f}, {ty:+.3f}, {tz+args.hover:+.3f}) gripper-down",
                       method="IK-seeded joint goal"
                              + (" + plate-flat path" if args.keep_plate_flat
