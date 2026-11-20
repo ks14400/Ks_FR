@@ -2108,6 +2108,39 @@ def main():
         _clean_exit(0)
 
     # ============================================================
+    # PHASE: align wrist at home to the PLACE orientation (option 2,
+    # 2026-11-19). The stand->vortex place orientation sits ~a tool-yaw
+    # half-turn from the pick family; doing that turn mid-transit squeezed
+    # the flat corridor at the instrument (8ml with its 15mm-deeper hold:
+    # unplannable, 10+ attempts). Reorient HERE at home instead — open
+    # space, full clearance — so the transit leaves with the wrist already
+    # in the place family and becomes a short hop. For easy directions
+    # (place yaw ~ current yaw) this plans as a near-no-op.
+    # ============================================================
+    _tf_home = lookup_tf(node, buf, "base_link", "gripper_grasp_link")
+    if not _run_phase(node, phases, "align wrist at home (place orientation)",
+                      "OMPL+IK",
+                      lambda: plan_arm_to_pose_via_ik(
+                          node, mg, ik_client, get_scene_client,
+                          "base_link", "gripper_grasp_link",
+                          _tf_home.transform.translation.x,
+                          _tf_home.transform.translation.y,
+                          _tf_home.transform.translation.z,
+                          _resolve_place_q(), vel=args.vel,
+                          planning_time=args.transit_time,
+                          planner_id=args.planner,
+                          planning_attempts=args.num_attempts,
+                          exec_client=exec_client,
+                          keep_orientation_along_path=args.keep_plate_flat,
+                          path_tilt_tol=args.path_tilt_tol),
+                      target="place orientation at the current (home) TCP position",
+                      tilt_limit=(f"±{args.path_tilt_tol:.3f} rad along path"
+                                  if args.keep_plate_flat else "OFF"),
+                      note="wrist family flip in open space; transit then "
+                           "needs no mid-corridor yaw turn"):
+        fail("wrist align at home failed")
+
+    # ============================================================
     # PHASE: transit above target  (OMPL — now from home, much shorter swing)
     # Plate is in the gripper during this phase. The via-home segment
     # above has already moved the arm into a neutral config, so this
