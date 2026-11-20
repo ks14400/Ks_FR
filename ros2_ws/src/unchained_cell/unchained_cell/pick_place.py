@@ -707,8 +707,7 @@ def compute_ik(node, ik_cli, base_frame, link_name, x, y, z, q,
 
 
 def compute_ik_best_of_many(node, ik_cli, base, link, x, y, z, q,
-                            current_state, group="fairino16_v6_group",
-                            prefer_same_wrist=False):
+                            current_state, group="fairino16_v6_group"):
     """Try MULTIPLE IK seeds (perturbed around current state) and return the
     joint config with smallest distance from current. KDL IK is iterative
     and converges to whichever local solution is nearest the seed — so by
@@ -731,20 +730,6 @@ def compute_ik_best_of_many(node, ik_cli, base, link, x, y, z, q,
             if n == "j1":
                 s.joint_state.position[i] = cur_j1 + off
         seed_configs.append((f"j1{off:+.1f}", s))
-    if prefer_same_wrist:
-        # Carried-plate transits: the place yaw sits ~90-180deg of TOOL yaw
-        # away. KDL can express that as a j6 turn (flat, safe — the
-        # pre-rotation handles it) or as a j5 family flip (plate tilts
-        # sideways mid-path — near-unplannable under the flat constraint,
-        # observed 2026-11-19). Seed j6 directly at the likely turns so the
-        # same-family solution exists in the candidate set.
-        cur_j6 = cur.get("j6", 0.0)
-        for off6 in (+1.57, -1.57, +2.9, -2.9):
-            s = copy.deepcopy(current_state)
-            for i, n in enumerate(s.joint_state.name):
-                if n == "j6":
-                    s.joint_state.position[i] = cur_j6 + off6
-            seed_configs.append((f"j6{off6:+.1f}", s))
 
     best = None
     best_travel = float("inf")
@@ -759,27 +744,13 @@ def compute_ik_best_of_many(node, ik_cli, base, link, x, y, z, q,
             continue
         n_ok += 1
         travel = sum(abs(result[k] - cur.get(k, 0.0)) for k in result)
-        # NOTE 2026-11-19: a same-wrist-family (j6-turn) penalty was tried
-        # here and REVERTED — at the vortex the j6-turn goal proved
-        # UNplannable under the flat constraint (-2 on every attempt),
-        # while the j5-flip family is the one RRTstar actually threads
-        # (96 + 20ml hardware runs). Raw travel picks correctly; the extra
-        # j6 seeds stay (more candidates, free) and wrist deltas are logged.
-        score = travel
-        if score < best_travel:
-            best_travel = score
+        if travel < best_travel:
+            best_travel = travel
             best = result
             best_name = name
-    if best is not None:
-        _wd = {k: best[k] - cur.get(k, 0.0) for k in ("j4", "j5", "j6")
-               if k in best}
-        node.get_logger().info(
-            f"   IK seed search: {n_ok}/{n_tried} valid → best seed "
-            f"'{best_name}' score {best_travel:.2f} | wrist Δ "
-            + ", ".join(f"{k}={v:+.2f}" for k, v in _wd.items()))
-    else:
-        node.get_logger().info(
-            f"   IK seed search: {n_ok}/{n_tried} valid → none usable")
+    node.get_logger().info(
+        f"   IK seed search: {n_ok}/{n_tried} valid → best seed '{best_name}' "
+        f"with Δjoints = {best_travel:.2f} rad")
     return best, best_travel
 
 
@@ -790,8 +761,7 @@ def plan_arm_to_pose_via_ik(node, mg, ik_cli, scene_client,
                             planner_id="RRTstar",
                             exec_client=None,
                             keep_orientation_along_path=False,
-                            path_tilt_tol=0.3,
-                            prerotate_wrist=False):
+                            path_tilt_tol=0.3):
     """Plan to a pose by FIRST searching multiple IK seeds for the joint
     config closest to current, THEN planning a joint-space goal to it.
     OMPL is given a deterministic goal that's by construction close to
@@ -804,41 +774,9 @@ def plan_arm_to_pose_via_ik(node, mg, ik_cli, scene_client,
     if current_state is None:
         return False, "could not fetch current robot state"
     target_joints, ik_delta = compute_ik_best_of_many(
-        node, ik_cli, base, link, x, y, z, q, current_state, group=group,
-        prefer_same_wrist=prerotate_wrist)
+        node, ik_cli, base, link, x, y, z, q, current_state, group=group)
     if target_joints is None:
         return False, "IK failed (no collision-free solution at the requested pose)"
-    if prerotate_wrist and exec_client is not None:
-        # Place-branch fix (2026-11-19): the place orientation at the vortex
-        # sits a half-turn of j6 from the pick family. A transit goal with
-        # |dj6| ~ pi under the plate-flat constraint is near-unplannable
-        # (observed: 7.6-27 rad detours, all budget-rejected). But with the
-        # gripper pointing DOWN, a pure j6 move is a yaw spin that keeps the
-        # plate flat by construction - so spin the wrist IN PLACE first,
-        # then the remaining transit is a short ordinary hop. A1 stays A1:
-        # this reaches the exact taught orientation, no plate flip.
-        _cur = {}
-        for _n, _p in zip(current_state.joint_state.name,
-                          current_state.joint_state.position):
-            _cur[_n] = _p
-        _d6 = abs(target_joints.get("j6", 0.0) - _cur.get("j6", 0.0))
-        if _d6 > 1.5:
-            _pre = {k: _cur.get(k, v) for k, v in target_joints.items()}
-            _pre["j6"] = target_joints["j6"]
-            node.get_logger().info(
-                f"   wrist pre-rotation: spinning j6 in place by "
-                f"{_d6:+.2f} rad (plate stays flat) before the transit")
-            _ok, _info = plan_arm_to_joints(
-                node, mg, _pre, vel=vel, planning_time=5.0,
-                planning_attempts=10, planner_id=planner_id,
-                exec_client=exec_client,
-                keep_orientation_along_path=keep_orientation_along_path,
-                orient_q=q, base_frame=base, link=link,
-                path_tilt_tol=path_tilt_tol)
-            if not _ok:
-                node.get_logger().warning(
-                    f"   wrist pre-rotation failed ({_info}) - "
-                    "falling back to direct transit planning")
     return plan_arm_to_joints(node, mg, target_joints, vel=vel,
                               planning_time=planning_time,
                               planning_attempts=planning_attempts,
@@ -2108,92 +2046,23 @@ def main():
         _clean_exit(0)
 
     # ============================================================
-    # PHASE: align wrist at home — PURE j6 yaw spin (option 2, take 2).
-    # Lesson from 2026-11-19 runs: a wrist FAMILY flip (j4/j5 half-turns)
-    # is near-unplannable under the flat constraint anywhere, and at a
-    # fixed TCP it is geometrically dead. But the place yaw is only a
-    # ~1.3 rad j6 turn away in the SAME family — so ask IK (with j6 seeds)
-    # for the same-family solution at the home TCP, and if it exists,
-    # spin ONLY j6 to it: a flat yaw spin that plans trivially. The
-    # transit then leaves in the place wrist family and is an ordinary
-    # via-home-sized hop. No same-family solution -> skip (transit
-    # retries with escalation handle it, as before).
-    # ============================================================
-    _tf_home = lookup_tf(node, buf, "base_link", "gripper_grasp_link")
-    _cur_state = get_current_robot_state(node, get_scene_client)
-    _cur_j = {n: p for n, p in zip(_cur_state.joint_state.name,
-                                   _cur_state.joint_state.position)}
-    _sol, _ = compute_ik_best_of_many(
-        node, ik_client, "base_link", "gripper_grasp_link",
-        _tf_home.transform.translation.x,
-        _tf_home.transform.translation.y,
-        _tf_home.transform.translation.z,
-        _resolve_place_q(), _cur_state, prefer_same_wrist=True)
-    _dj = ({k: _sol[k] - _cur_j.get(k, 0.0) for k in _sol} if _sol else {})
-    if (_sol and abs(_dj.get("j4", 9.0)) < 0.3
-            and abs(_dj.get("j5", 9.0)) < 0.3
-            and abs(_dj.get("j6", 0.0)) > 0.3):
-        _stage = {k: _cur_j.get(k, _sol[k]) for k in _sol}
-        _stage["j6"] = _sol["j6"]
-        if not _run_phase(node, phases,
-                          "align wrist at home (pure j6 yaw spin)", "OMPL",
-                          lambda: plan_arm_to_joints(
-                              node, mg, _stage, vel=args.vel,
-                              planning_time=args.planning_time,
-                              planning_attempts=args.num_attempts,
-                              planner_id=args.planner,
-                              exec_client=exec_client,
-                              keep_orientation_along_path=args.keep_plate_flat,
-                              orient_q=_resolve_place_q(),
-                              base_frame="base_link",
-                              link="gripper_grasp_link",
-                              path_tilt_tol=args.path_tilt_tol),
-                          target=(f"j6 {_cur_j.get('j6', 0.0):+.2f} -> "
-                                  f"{_sol['j6']:+.2f} rad, other joints held"),
-                          note="flat yaw spin in place; transit leaves in "
-                               "the place wrist family"):
-            fail("wrist align at home failed")
-    else:
-        node.get_logger().info(
-            "   align wrist: no same-family j6-turn at home (wrist Δ "
-            + ", ".join(f"{k}={_dj.get(k, 0.0):+.2f}"
-                        for k in ("j4", "j5", "j6"))
-            + ") — skipping; transit handles orientation with retries")
-
-    # ============================================================
     # PHASE: transit above target  (OMPL — now from home, much shorter swing)
     # Plate is in the gripper during this phase. The via-home segment
     # above has already moved the arm into a neutral config, so this
     # transit is a short joint-space hop, not a workspace-spanning swing.
     # ============================================================
-    _transit_try = {"n": 0}
-
-    def _transit_attempt():
-        # Escalate planning time across retries (15 -> 24 -> 33 -> 42 -> 45s
-        # at the default 15): the flat-constrained vortex transit is hard —
-        # the known-good path was found within 15s once, so more time per
-        # retry beats re-rolling the same 15s dice (2026-11-19).
-        _transit_try["n"] += 1
-        _t = min(args.transit_time * (1 + 0.6 * (_transit_try["n"] - 1)),
-                 args.transit_time * 3)
-        if _transit_try["n"] > 1:
-            node.get_logger().info(
-                f"   retry {_transit_try['n']}: planning time -> {_t:.0f}s")
-        return plan_arm_to_pose_via_ik(
-            node, mg, ik_client, get_scene_client,
-            "base_link", "gripper_grasp_link",
-            *_place_xy(), tz + args.hover,
-            _resolve_place_q(), vel=args.vel,
-            prerotate_wrist=True,
-            planning_time=_t,
-            planner_id=args.planner,
-            planning_attempts=args.num_attempts,
-            exec_client=exec_client,
-            keep_orientation_along_path=args.keep_plate_flat,
-            path_tilt_tol=args.path_tilt_tol)
-
     if not _run_phase(node, phases, f"transit above {args.target}", "OMPL+IK",
-                      _transit_attempt,
+                      lambda: plan_arm_to_pose_via_ik(
+                          node, mg, ik_client, get_scene_client,
+                          "base_link", "gripper_grasp_link",
+                          *_place_xy(), tz + args.hover,
+                          _resolve_place_q(), vel=args.vel,
+                          planning_time=args.transit_time,
+                          planner_id=args.planner,
+                          planning_attempts=args.num_attempts,
+                          exec_client=exec_client,
+                          keep_orientation_along_path=args.keep_plate_flat,
+                          path_tilt_tol=args.path_tilt_tol),
                       target=f"({tx:+.3f}, {ty:+.3f}, {tz+args.hover:+.3f}) gripper-down",
                       method="IK-seeded joint goal"
                              + (" + plate-flat path" if args.keep_plate_flat
