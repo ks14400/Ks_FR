@@ -4,20 +4,20 @@ deck_vortex_pos1:
   dz_mm_by_type:
     20ml: 19.2
     8ml: 5.1
-  captured: '2026-11-19T15:45:41.113200'
+  captured: '2026-11-20T17:43:29.131704'
   place_dxy_mm_by_type:
     20ml:
     - -17.3
     - -18.0
     '96':
-    - -16.7
-    - -18.9
+    - -18.4
+    - -17.4
     8ml:
     - -13.8
     - -17.3
   place_dz_mm_by_type:
     20ml: -2.3
-    '96': -1.1
+    '96': -7.6
     8ml: -5.0
   dxy_mm_by_type:
     '96':
@@ -73,6 +73,21 @@ deck_vortex_pos1:
       - -16.7
       - -18.9
       - -1.1
+    stand_pos5:
+      '96':
+      - -14.4
+      - -12.8
+      - -11.1
+    stand_pos6:
+      '96':
+      - -16.5
+      - -15.4
+      - -10.4
+    stand_pos8:
+      '96':
+      - -18.4
+      - -17.4
+      - -7.6
 stand_pos4:
   dx_mm: 0.5
   dy_mm: -0.1
@@ -259,7 +274,7 @@ stand_pos5:
     8ml: 119.7
   dz_mm_by_type:
     '96': 11.9
-    8ml: 11.9
+    8ml: 8.9
 stand_pos6:
   place_by_source:
     deck_vortex_pos1:
@@ -294,7 +309,7 @@ stand_pos6:
   plate_type: '96'
   dz_mm_by_type:
     '96': 8.2
-    8ml: 8.2
+    8ml: 5.2
   grip_mm_by_type:
     '96': 119.7
     8ml: 119.7
@@ -332,7 +347,7 @@ stand_pos7:
   plate_type: '96'
   dz_mm_by_type:
     '96': 8.5
-    8ml: 8.5
+    8ml: 5.5
   grip_mm_by_type:
     '96': 119.7
     8ml: 119.7
@@ -370,7 +385,7 @@ stand_pos8:
   plate_type: '96'
   dz_mm_by_type:
     '96': 7.3
-    8ml: 7.3
+    8ml: 4.3
   grip_mm_by_type:
     '96': 119.7
     8ml: 119.7
