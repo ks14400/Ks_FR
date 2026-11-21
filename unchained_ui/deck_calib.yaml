@@ -259,7 +259,7 @@ stand_pos5:
     8ml: 119.7
   dz_mm_by_type:
     '96': 11.9
-    8ml: 14.9
+    8ml: 11.9
 stand_pos6:
   place_by_source:
     deck_vortex_pos1:
@@ -294,7 +294,7 @@ stand_pos6:
   plate_type: '96'
   dz_mm_by_type:
     '96': 8.2
-    8ml: 11.2
+    8ml: 8.2
   grip_mm_by_type:
     '96': 119.7
     8ml: 119.7
@@ -332,7 +332,7 @@ stand_pos7:
   plate_type: '96'
   dz_mm_by_type:
     '96': 8.5
-    8ml: 11.5
+    8ml: 8.5
   grip_mm_by_type:
     '96': 119.7
     8ml: 119.7
@@ -370,7 +370,7 @@ stand_pos8:
   plate_type: '96'
   dz_mm_by_type:
     '96': 7.3
-    8ml: 10.3
+    8ml: 7.3
   grip_mm_by_type:
     '96': 119.7
     8ml: 119.7
