@@ -1178,16 +1178,17 @@ def load_taught_calib():
 def taught_offset_deck_frame(node, buf, deck, calib_entry):
     """Convert a taught base_link-frame (dx,dy,dz) mm delta into the deck's
     local frame, for placing the VIRTUAL plate at the taught real position."""
-    # Z uses PLACE dz — the deck's true floor-height error. The PICK dz
-    # also encodes where on the plate the user chose to grip, which must
-    # not move the resting plate (pick/place dz split, 2026-11-17).
+    # Z is ZERO: the resting plate sits on the model pocket floor. It
+    # briefly borrowed the deck's PLACE dz as "true floor error", but
+    # taught place_dz encodes the user's release preference (fins, hover
+    # style; +8..16mm observed) — borrowing it floated a phantom plate
+    # that blocked the pos3 20ml pick descend and silently shrank measured
+    # holds / lowered releases (2026-11-23). place_dz now acts ONLY when
+    # the deck is the place TARGET; pick-time geometry is model + pick XY.
     _xy = calib_entry.get("dxy_mm_by_type", {}).get(
         PLATE_TYPE) or [calib_entry.get("dx_mm", 0.0),
                         calib_entry.get("dy_mm", 0.0)]
-    d_base = _np.array([_xy[0], _xy[1],
-                        calib_entry.get("place_dz_mm_by_type", {}).get(
-                            PLATE_TYPE, calib_entry.get("place_dz_mm", 0.0))
-                        ]) / 1000.0
+    d_base = _np.array([_xy[0], _xy[1], 0.0]) / 1000.0
     R_deck = _quat_to_R(lookup_tf(node, buf, "base_link", deck).transform.rotation)
     return (R_deck.T @ d_base).tolist()
 
