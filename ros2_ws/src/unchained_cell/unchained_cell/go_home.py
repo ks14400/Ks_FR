@@ -29,8 +29,11 @@ from rclpy.node import Node
 from action_msgs.srv import CancelGoal
 from moveit_msgs.action import MoveGroup
 
+from sensor_msgs.msg import JointState
+
 from unchained_cell.pick_place import (
     HOME_JOINTS,
+    _clean_exit,
     GRIPPER_OPEN,
     GRIPPER_STROKE_MM,
     grip_mm_to_joint,
@@ -124,12 +127,24 @@ def main():
     node.get_logger().info("Waiting for /move_action ...")
     if not mg.wait_for_server(timeout_sec=15.0):
         node.get_logger().error("move_group not available")
-        rclpy.shutdown()
-        sys.exit(1)
+        _clean_exit(1)
 
     if not args.no_cancel:
         node.get_logger().info("Step 1/2: cancel any active motion")
         cancel_all_motion(node, mg)
+
+    _js = {"baseline": None, "moved": False}
+
+    def _on_js(m):
+        pos = dict(zip(m.name, m.position))
+        arm = [pos[k] for k in HOME_JOINTS if k in pos]
+        if len(arm) != len(HOME_JOINTS):
+            return
+        if _js["baseline"] is None:
+            _js["baseline"] = arm
+        elif max(abs(a - b) for a, b in zip(arm, _js["baseline"])) > 0.004:
+            _js["moved"] = True
+    node.create_subscription(JointState, "/joint_states", _on_js, 20)
 
     if args.gripper_only:
         node.get_logger().info("Step 2/2: SKIPPED (--gripper-only) — arm stays put")
@@ -141,6 +156,27 @@ def main():
         node.get_logger().info(
             f"  vel scaling: {args.vel:.3f}  (trajectory will be paced slowly)")
 
+        _done = threading.Event()
+
+        def _watchdog():
+            # Give planning + first motion 15s. If the goal is still running
+            # and NOT A SINGLE JOINT has moved, the robot is ignoring motion
+            # commands — waiting the full 90s just wedges the stack (Epyon
+            # 2026-11-23: zero-motion 'execution', stuck goal, crashed retry).
+            if _done.wait(15.0):
+                return
+            if not _js["moved"]:
+                node.get_logger().error(
+                    "WATCHDOG: 15s into the home goal and the arm has not "
+                    "moved at all. The robot is ignoring motion commands — "
+                    "likely drag/manual mode still enabled, E-stop latched, "
+                    "or a wedged bridge connection. Cancelling the goal. "
+                    "Fix: put the robot in AUTO (pendant), clear E-stop, "
+                    "restart the bridge, then retry homing.")
+                cancel_all_motion(node, mg)
+                _clean_exit(3)
+
+        threading.Thread(target=_watchdog, daemon=True).start()
         t0 = time.time()
         ok, info = plan_arm_to_joints(
             node, mg, HOME_JOINTS,
@@ -149,13 +185,13 @@ def main():
             planning_attempts=15,
             planner_id="RRTstar",
         )
+        _done.set()
         dur = time.time() - t0
 
         if not ok:
             node.get_logger().error(f"  [FAIL] {dur:.2f}s — {info}")
             node.get_logger().error("Arm did NOT reach home. Check rviz.")
-            rclpy.shutdown()
-            sys.exit(1)
+            _clean_exit(1)
         node.get_logger().info(f"  [OK] {dur:.2f}s — {info}")
 
     if args.gripper_mm is not None:
@@ -178,9 +214,9 @@ def main():
             node.get_logger().info(f"  [OK] {dur:.2f}s — {info}")
         else:
             node.get_logger().error(f"  [FAIL] {dur:.2f}s — {info}")
-            rclpy.shutdown(); sys.exit(1)
+            _clean_exit(1)
         node.get_logger().info("DONE — arm at HOME, gripper set")
-        rclpy.shutdown(); sys.exit(0)
+        _clean_exit(0)
 
     if args.gripper != "keep":
         target = GRIPPER_CLOSED if args.gripper == "close" else GRIPPER_OPEN
@@ -194,15 +230,13 @@ def main():
         else:
             node.get_logger().error(f"  [FAIL] {dur:.2f}s — {info}")
             node.get_logger().error("Gripper did not move. Arm IS at home.")
-            rclpy.shutdown()
-            sys.exit(1)
+            _clean_exit(1)
 
     if args.gripper_only:
         node.get_logger().info("DONE — gripper command finished (arm untouched)")
     else:
         node.get_logger().info("DONE — arm is at HOME")
-    rclpy.shutdown()
-    sys.exit(0)
+    _clean_exit(0)
 
 
 if __name__ == "__main__":
