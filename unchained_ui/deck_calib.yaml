@@ -1,10 +1,10 @@
 deck_vortex_pos1:
-  dx_mm: -15.4
-  dy_mm: -18.1
+  dx_mm: -12.8
+  dy_mm: -18.6
   dz_mm_by_type:
-    20ml: 19.2
+    20ml: 17.5
     8ml: 5.1
-  captured: '2026-11-20T17:43:29.131704'
+  captured: '2026-11-24T15:55:39.951174'
   place_dxy_mm_by_type:
     20ml:
     - -17.3
@@ -23,7 +23,10 @@ deck_vortex_pos1:
     '96':
     - -15.4
     - -18.1
-  plate_type: '96'
+    20ml:
+    - -12.8
+    - -18.6
+  plate_type: 20ml
   place_by_source:
     stand_pos1:
       20ml:
@@ -88,6 +91,8 @@ deck_vortex_pos1:
       - -18.4
       - -17.4
       - -7.6
+  grip_mm_by_type:
+    20ml: 80.0
 stand_pos4:
   dx_mm: 0.5
   dy_mm: -0.1
